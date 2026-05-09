@@ -1,0 +1,14 @@
+.dart_tool
+build
+.fvm
+.idea
+.vscode
+ios
+android
+macos
+linux
+windows
+test
+.flutter-plugins-dependencies
+*.iml
+.metadata
