@@ -2,10 +2,32 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'game/config.dart';
+import 'i18n/i18n.dart';
 import 'ui/screens/home_screen.dart';
 
-class JumpingJackApp extends StatelessWidget {
+class JumpingJackApp extends StatefulWidget {
   const JumpingJackApp({super.key});
+
+  @override
+  State<JumpingJackApp> createState() => _JumpingJackAppState();
+}
+
+class _JumpingJackAppState extends State<JumpingJackApp> {
+  @override
+  void initState() {
+    super.initState();
+    I18n.instance.addListener(_onLocaleChanged);
+  }
+
+  @override
+  void dispose() {
+    I18n.instance.removeListener(_onLocaleChanged);
+    super.dispose();
+  }
+
+  void _onLocaleChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {

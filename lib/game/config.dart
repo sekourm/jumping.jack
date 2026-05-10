@@ -110,6 +110,12 @@ class GameConfig {
   static const int timerStartsAfterJumps = 3;
   static const double timerWarnThreshold = 1.5;
 
+  // Battle Royale virtual viewport — every client uses these dimensions
+  // for procedural world generation regardless of their actual screen
+  // size, so platforms land at identical world coordinates everywhere.
+  static const double brVirtualViewportWidth = 480;
+  static const double brVirtualViewportHeight = 800;
+
   // Colors
   static const Color bgColor = Color(0xFF101820);
   static const Color platformColor = Color(0xFF3D5A6C);

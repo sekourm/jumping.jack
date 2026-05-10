@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../game/config.dart';
+import '../../i18n/i18n.dart';
 import '../../services/audio_manager.dart';
 import '../../services/preferences.dart';
 import '../widgets/cosmic_background.dart';
@@ -69,12 +70,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          const _SectionLabel('AUDIO'),
+                          _SectionLabel(I18n.t.audioSection),
                           const SizedBox(height: 8),
                           _SettingCard(
                             icon: Icons.music_note_rounded,
                             child: _VolumeSlider(
-                              label: 'MUSIQUE',
+                              label: I18n.t.music,
                               value: _musicVolume,
                               onChanged: (v) {
                                 setState(() => _musicVolume = v);
@@ -86,7 +87,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           _SettingCard(
                             icon: Icons.graphic_eq_rounded,
                             child: _VolumeSlider(
-                              label: 'EFFETS',
+                              label: I18n.t.sfx,
                               value: _sfxVolume,
                               onChanged: (v) {
                                 setState(() => _sfxVolume = v);
@@ -96,19 +97,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ),
                           const SizedBox(height: 28),
-                          const _SectionLabel('JEU'),
+                          _SectionLabel(I18n.t.gameSection),
                           const SizedBox(height: 8),
                           _SettingCard(
                             icon: Icons.school_rounded,
                             child: _Toggle(
-                              label: 'TUTORIEL',
-                              description:
-                                  'Afficher au début de chaque partie',
+                              label: I18n.t.tutorialLabel,
+                              description: I18n.t.tutorialDesc,
                               value: _showTutorial,
                               onChanged: (v) {
                                 AudioManager.click();
                                 setState(() => _showTutorial = v);
                                 Preferences.showTutorial = v;
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 28),
+                          _SectionLabel(I18n.t.languageSection),
+                          const SizedBox(height: 8),
+                          _SettingCard(
+                            icon: Icons.language_rounded,
+                            child: _LanguagePicker(
+                              current: I18n.instance.locale,
+                              onChanged: (loc) {
+                                AudioManager.click();
+                                I18n.instance.setLocale(loc);
+                                setState(() {});
                               },
                             ),
                           ),
@@ -363,6 +377,131 @@ class _VolumeSlider extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _LanguagePicker extends StatelessWidget {
+  const _LanguagePicker({required this.current, required this.onChanged});
+  final AppLocale current;
+  final ValueChanged<AppLocale> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.start,
+      children: [
+        _FlagButton(
+          stripes: const [
+            Color(0xFF002395),
+            Color(0xFFFFFFFF),
+            Color(0xFFED2939),
+          ],
+          selected: current == AppLocale.fr,
+          onPressed: () => onChanged(AppLocale.fr),
+        ),
+        const SizedBox(width: 12),
+        _FlagButton(
+          stripes: const [
+            Color(0xFF012169),
+            Color(0xFFFFFFFF),
+            Color(0xFFC8102E),
+          ],
+          selected: current == AppLocale.en,
+          onPressed: () => onChanged(AppLocale.en),
+        ),
+      ],
+    );
+  }
+}
+
+class _FlagButton extends StatelessWidget {
+  const _FlagButton({
+    required this.stripes,
+    required this.selected,
+    required this.onPressed,
+  });
+  final List<Color> stripes;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = GameConfig.playerColor;
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onPressed,
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: selected
+                ? accent.withValues(alpha: 0.10)
+                : Colors.white.withValues(alpha: 0.03),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: selected
+                  ? accent.withValues(alpha: 0.85)
+                  : Colors.white.withValues(alpha: 0.18),
+              width: selected ? 1.8 : 1.2,
+            ),
+          ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: Container(
+                  width: 44,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      for (final c in stripes)
+                        Expanded(child: Container(color: c)),
+                    ],
+                  ),
+                ),
+              ),
+              if (selected)
+                Positioned(
+                  right: -6,
+                  top: -6,
+                  child: Container(
+                    width: 16,
+                    height: 16,
+                    decoration: BoxDecoration(
+                      color: accent,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: GameConfig.bgColor,
+                        width: 1.5,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: accent.withValues(alpha: 0.6),
+                          blurRadius: 8,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      color: GameConfig.bgColor,
+                      size: 12,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

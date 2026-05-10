@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../../config/supabase_config.dart';
 import '../../game/config.dart';
+import '../../i18n/i18n.dart';
 import '../../services/audio_manager.dart';
 import '../../services/preferences.dart';
 import '../widgets/cosmic_background.dart';
 import '../widgets/fortnite_button.dart';
 import 'game_screen.dart';
+import 'lobby_screen.dart';
 import 'settings_screen.dart';
 
 /// Bumped manually before each push so we can verify the deploy is live.
@@ -23,13 +26,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    I18n.instance.addListener(_onLocaleChanged);
     AudioManager.preload().then((_) => AudioManager.startMenuMusic());
   }
 
   @override
   void dispose() {
+    I18n.instance.removeListener(_onLocaleChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void _onLocaleChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -65,7 +74,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      _BestScoreChip(score: Preferences.bestScore),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _BestScoreChip(score: Preferences.bestScore),
+                          const SizedBox(width: 8),
+                          _BrWinsChip(wins: Preferences.brWins),
+                        ],
+                      ),
                       _IconChip(
                         icon: Icons.settings_outlined,
                         onPressed: _openSettings,
@@ -83,7 +99,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 280),
                           child: FortniteButton(
-                            label: 'MODE SOLO',
+                            label: I18n.t.playSolo,
                             icon: Icons.play_arrow_rounded,
                             onPressed: _startGame,
                             height: 52,
@@ -94,10 +110,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 280),
                           child: FortniteButton(
-                            label: 'BATTLE ROYALE',
+                            label: I18n.t.battleRoyale,
                             icon: Icons.local_fire_department_rounded,
                             style: FortniteButtonStyle.epic,
-                            onPressed: _comingSoon,
+                            onPressed: _openBattleRoyale,
                             height: 52,
                             fontSize: 16,
                           ),
@@ -140,8 +156,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _comingSoon() {
+  void _openBattleRoyale() {
     AudioManager.click();
+    if (!SupabaseConfig.isConfigured) {
+      _showToast(I18n.t.backendNotConfigured);
+      return;
+    }
+    Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        pageBuilder: (_, a, b) => const LobbyScreen(),
+        transitionDuration: const Duration(milliseconds: 200),
+        reverseTransitionDuration: const Duration(milliseconds: 200),
+        transitionsBuilder: (_, animation, b, child) =>
+            FadeTransition(opacity: animation, child: child),
+      ),
+    ).then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _showToast(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -154,20 +188,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             side: const BorderSide(color: Color(0xFFB14BFF), width: 1.4),
           ),
           duration: const Duration(seconds: 2),
-          content: const Row(
+          content: Row(
             children: [
-              Icon(
+              const Icon(
                 Icons.local_fire_department_rounded,
                 color: Color(0xFFB14BFF),
               ),
-              SizedBox(width: 12),
-              Text(
-                'BATTLE ROYALE — bientôt disponible',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.5,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.2,
+                  ),
                 ),
               ),
             ],
@@ -309,21 +345,30 @@ class _IconChip extends StatelessWidget {
   }
 }
 
-class _BestScoreChip extends StatelessWidget {
-  const _BestScoreChip({required this.score});
-  final int score;
+class _StatChip extends StatelessWidget {
+  const _StatChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.accent,
+    required this.active,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color accent;
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
-    final accent = GameConfig.playerColor;
-    final hasScore = score > 0;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: accent.withValues(alpha: hasScore ? 0.55 : 0.22),
+          color: accent.withValues(alpha: active ? 0.55 : 0.22),
           width: 1.2,
         ),
       ),
@@ -331,23 +376,73 @@ class _BestScoreChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            Icons.emoji_events,
-            color: accent.withValues(alpha: hasScore ? 1.0 : 0.5),
-            size: 14,
+            icon,
+            color: accent.withValues(alpha: active ? 1.0 : 0.5),
+            size: 16,
           ),
-          const SizedBox(width: 6),
-          Text(
-            hasScore ? '$score' : '—',
-            style: TextStyle(
-              color: hasScore ? Colors.white : Colors.white60,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.5,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+          const SizedBox(width: 8),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: accent.withValues(alpha: active ? 0.95 : 0.55),
+                  fontSize: 8,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.5,
+                  height: 1,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.4,
+                  height: 1,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
           ),
         ],
       ),
+    );
+  }
+}
+
+class _BrWinsChip extends StatelessWidget {
+  const _BrWinsChip({required this.wins});
+  final int wins;
+
+  @override
+  Widget build(BuildContext context) {
+    return _StatChip(
+      icon: Icons.local_fire_department_rounded,
+      label: 'BR',
+      value: '$wins',
+      accent: const Color(0xFFB14BFF),
+      active: wins > 0,
+    );
+  }
+}
+
+class _BestScoreChip extends StatelessWidget {
+  const _BestScoreChip({required this.score});
+  final int score;
+
+  @override
+  Widget build(BuildContext context) {
+    return _StatChip(
+      icon: Icons.emoji_events,
+      label: 'SCORE',
+      value: score > 0 ? '$score' : '—',
+      accent: GameConfig.playerColor,
+      active: score > 0,
     );
   }
 }

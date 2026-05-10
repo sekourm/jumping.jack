@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../game/config.dart';
 import '../../game/jumping_jack_game.dart';
+import '../../i18n/i18n.dart';
 import '../../services/audio_manager.dart';
 import '../../services/preferences.dart';
 import '../../state/game_state.dart';
@@ -122,7 +123,7 @@ class _DeathContentState extends State<_DeathContent>
         const SizedBox(height: 28),
         _stagger(
           FortniteButton(
-            label: 'REJOUER',
+            label: I18n.t.replay,
             icon: Icons.replay_rounded,
             height: 60,
             onPressed: () {
@@ -137,7 +138,7 @@ class _DeathContentState extends State<_DeathContent>
         const SizedBox(height: 12),
         _stagger(
           FortniteButton(
-            label: 'MENU',
+            label: I18n.t.menu,
             icon: Icons.home_rounded,
             style: FortniteButtonStyle.secondary,
             height: 56,
@@ -165,7 +166,7 @@ class _GameOverTitle extends StatelessWidget {
       alignment: Alignment.center,
       children: [
         Text(
-          'TERMINÉ',
+          I18n.t.gameOver,
           style: TextStyle(
             fontSize: 44,
             fontWeight: FontWeight.w900,
@@ -189,7 +190,7 @@ class _GameOverTitle extends StatelessWidget {
             stops: [0.0, 0.55, 1.0],
           ).createShader(rect),
           child: Text(
-            'TERMINÉ',
+            I18n.t.gameOver,
             style: TextStyle(
               fontSize: 44,
               fontWeight: FontWeight.w900,
@@ -262,18 +263,18 @@ class _NewBestRibbonState extends State<_NewBestRibbon>
                 ),
               ],
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
+                const Icon(
                   Icons.emoji_events,
                   color: GameConfig.bgColor,
                   size: 18,
                 ),
-                SizedBox(width: 10),
+                const SizedBox(width: 10),
                 Text(
-                  'NOUVEAU RECORD',
-                  style: TextStyle(
+                  I18n.t.newRecord,
+                  style: const TextStyle(
                     color: GameConfig.bgColor,
                     fontSize: 14,
                     fontWeight: FontWeight.w900,
@@ -351,7 +352,7 @@ class _DeltaLine extends StatelessWidget {
   Widget build(BuildContext context) {
     if (isNewBest) {
       return Text(
-        'RECORD BATTU',
+        I18n.t.recordBeaten,
         style: TextStyle(
           color: GameConfig.playerColor,
           fontSize: 12,
@@ -362,7 +363,7 @@ class _DeltaLine extends StatelessWidget {
     }
     final delta = bestScore - score;
     return Text(
-      'À $delta DU RECORD',
+      I18n.t.distanceFromRecord(delta),
       style: const TextStyle(
         color: GameConfig.textMuted,
         fontSize: 12,
@@ -403,7 +404,7 @@ class _BestTile extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               Text(
-                'MON MEILLEUR SCORE',
+                I18n.t.bestLabel,
                 style: TextStyle(
                   color: accent.withValues(alpha: 0.9),
                   fontSize: 11,

@@ -16,6 +16,7 @@ class GameWorld extends PositionComponent {
     required this.viewportWidth,
     this.canSpawnVision,
     int? seed,
+    this.randomPickups = true,
   }) : _rng = Random(seed);
 
   double viewportWidth;
@@ -26,6 +27,10 @@ class GameWorld extends PositionComponent {
   /// already has a Vision boost active — no point handing out another).
   /// Defaults to "always allow" when not set.
   final bool Function()? canSpawnVision;
+  /// Set to false in Battle Royale: the match has a single shared pickup
+  /// spawned manually by [JumpingJackGame] instead of the per-platform
+  /// random spawner.
+  final bool randomPickups;
   double _highestY = 0; // y of last spawned (highest) platform
   int _spawnIndex = 0;
   int _platformsSinceLastPickup = 0;
@@ -170,6 +175,7 @@ class GameWorld extends PositionComponent {
   /// above its top surface) if the cooldown has elapsed and the dice rolls
   /// right. The pickup is pinned to the platform so it follows movement.
   void _maybeSpawnPickupBetween(Platform from, Platform to) {
+    if (!randomPickups) return; // BR mode: single shared pickup, no random.
     _platformsSinceLastPickup++;
     if (_platformsSinceLastPickup < GameConfig.pickupMinPlatformsBetween) {
       return;

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../game/config.dart';
 import '../../game/jumping_jack_game.dart';
+import '../../i18n/i18n.dart';
 import '../../services/audio_manager.dart';
 import '../../services/preferences.dart';
 import '../widgets/fortnite_button.dart';
@@ -234,14 +235,14 @@ class _StepText extends StatelessWidget {
     final String subtitle;
 
     if (t < _DemoPainter._holdEnd) {
-      title = 'MAINTIENS';
-      subtitle = 'Appuie et garde ton doigt enfoncé';
+      title = I18n.t.tutorialHold;
+      subtitle = I18n.t.tutorialHoldDesc;
     } else if (t < _DemoPainter._dragEnd) {
-      title = 'VISE';
-      subtitle = 'Glisse ton doigt vers la direction du saut';
+      title = I18n.t.tutorialAim;
+      subtitle = I18n.t.tutorialAimDesc;
     } else {
-      title = 'RELÂCHE';
-      subtitle = 'Le saut part dans la direction visée';
+      title = I18n.t.tutorialRelease;
+      subtitle = I18n.t.tutorialReleaseDesc;
     }
 
     final step = t < _DemoPainter._holdEnd
@@ -253,7 +254,7 @@ class _StepText extends StatelessWidget {
     return Column(
       children: [
         Text(
-          'TUTORIEL  —  $step / 3',
+          I18n.t.tutorialStep(step),
           style: const TextStyle(
             color: GameConfig.textMuted,
             fontSize: 11,
@@ -338,9 +339,9 @@ class _DontShowToggle extends StatelessWidget {
                   : null,
             ),
             const SizedBox(width: 10),
-            const Text(
-              'Ne plus afficher',
-              style: TextStyle(
+            Text(
+              I18n.t.dontShowAgain,
+              style: const TextStyle(
                 color: Colors.white70,
                 fontSize: 13,
                 letterSpacing: 1.2,
@@ -363,7 +364,7 @@ class _ReadyButton extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 40),
       child: FortniteButton(
-        label: 'JE SUIS PRÊT',
+        label: I18n.t.ready,
         icon: Icons.rocket_launch_rounded,
         onPressed: onPressed,
         height: 60,
