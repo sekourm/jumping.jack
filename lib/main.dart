@@ -4,12 +4,18 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app.dart';
 import 'config/supabase_config.dart';
 import 'i18n/i18n.dart';
+import 'services/audio_manager.dart';
 import 'services/preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Preferences.init();
   I18n.instance.load();
+  // Sync the persisted mute state into the audio engine before any
+  // music / SFX call.
+  if (Preferences.muted) {
+    await AudioManager.setMuted(true);
+  }
   if (SupabaseConfig.isConfigured) {
     try {
       await Supabase.initialize(

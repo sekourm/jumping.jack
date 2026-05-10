@@ -3,6 +3,7 @@ enum DeathReason {
   offscreenRight,
   offscreenBottom,
   timeout,
+  crushed,
 }
 
 extension DeathReasonLabel on DeathReason {
@@ -16,6 +17,8 @@ extension DeathReasonLabel on DeathReason {
         return 'Chute';
       case DeathReason.timeout:
         return 'Trop lent';
+      case DeathReason.crushed:
+        return 'Écrasé';
     }
   }
 }

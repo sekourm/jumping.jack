@@ -68,6 +68,7 @@ class AudioManager {
   /// — the only state in which iOS Safari will actually start the audio.
   static void _resumeMusic({double volume = 0.45}) {
     _currentBgmBaseVolume = volume;
+    if (_muted) return; // master mute → keep the track paused
     final p = _musicPlayer;
     if (p == null || !_musicReady) return;
     // Don't await — these calls schedule on the JS event loop synchronously
@@ -91,6 +92,22 @@ class AudioManager {
     sfxVolume = v.clamp(0.0, 1.0);
   }
 
+  /// Master-mute toggle. When [muted] is true the music track is paused
+  /// and every SFX is silenced. When false the previous user-set volumes
+  /// are restored automatically.
+  static bool _muted = false;
+  static bool get isMuted => _muted;
+  static Future<void> setMuted(bool muted) async {
+    _muted = muted;
+    if (muted) {
+      try {
+        await _musicPlayer?.pause();
+      } catch (_) {}
+    } else {
+      _resumeMusic(volume: _currentBgmBaseVolume);
+    }
+  }
+
   // Menu and in-game share the same track — calling either resumes it.
   static void startMenuMusic() => _resumeMusic(volume: 0.45);
   static void startGameMusic() => _resumeMusic(volume: 0.45);
@@ -108,6 +125,7 @@ class AudioManager {
   static Future<void> playGameOverJingle() async {
     await pauseMusic();
     await stopGameOverJingle();
+    if (_muted) return;
     try {
       _gameOverPlayer =
           await FlameAudio.play('gameover.mp3', volume: 0.65 * sfxVolume);
@@ -133,6 +151,7 @@ class AudioManager {
   // ---------- SFX ----------
 
   static void _play(String file, {double volume = 1.0}) {
+    if (_muted) return;
     try {
       FlameAudio.play(file, volume: volume * sfxVolume);
     } catch (e) {
@@ -151,4 +170,8 @@ class AudioManager {
   static void pickupWarp() => _play('pickup_warp.mp3', volume: 0.7);
   static void platformExplode() =>
       _play('platform_explode.mp3', volume: 0.4);
+
+  /// Generic BR "someone just died" SFX. Reuses the platform explosion
+  /// thud which conveys impact without needing a new audio asset.
+  static void brDeath() => _play('platform_explode.mp3', volume: 0.6);
 }

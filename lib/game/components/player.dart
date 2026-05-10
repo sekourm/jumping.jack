@@ -4,6 +4,7 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
 import '../config.dart';
+import '../jumping_jack_game.dart';
 import 'platform.dart';
 
 /// Player physics:
@@ -11,7 +12,8 @@ import 'platform.dart';
 ///   feet line and squash/stretch (scale) is symmetric around it.
 /// - One-way collision: only lands on platforms when falling and feet cross
 ///   the platform's top within the same frame.
-class Player extends PositionComponent {
+class Player extends PositionComponent
+    with HasGameReference<JumpingJackGame> {
   Player()
       : super(
           size: Vector2.all(GameConfig.playerSize),
@@ -134,7 +136,40 @@ class Player extends PositionComponent {
         ..color = const Color(0xFF7A4A00),
     );
 
+    // Battle Royale: dangerous spikes under the cube to communicate
+    // "this end stomps your opponents".
+    if (game.isBattleRoyale) {
+      _renderSpikes(canvas, w, h);
+    }
+
     _renderFace(canvas, w, h);
+  }
+
+  /// Renders downward-pointing teeth/spikes along the bottom edge of the
+  /// cube, brown stroke + lighter fill, to signify the crush hitbox.
+  void _renderSpikes(Canvas canvas, double w, double h) {
+    const spikeCount = 4;
+    final spikeBaseY = h - 0.5;
+    final spikeTipY = h + 4.5;
+    final cellW = w / spikeCount;
+    final fill = Paint()..color = const Color(0xFFFFEFC2);
+    final stroke = Paint()
+      ..color = const Color(0xFF7A4A00)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..strokeJoin = StrokeJoin.round;
+    for (var i = 0; i < spikeCount; i++) {
+      final left = i * cellW + cellW * 0.10;
+      final right = (i + 1) * cellW - cellW * 0.10;
+      final cx = (left + right) / 2;
+      final path = Path()
+        ..moveTo(left, spikeBaseY)
+        ..lineTo(right, spikeBaseY)
+        ..lineTo(cx, spikeTipY)
+        ..close();
+      canvas.drawPath(path, fill);
+      canvas.drawPath(path, stroke);
+    }
   }
 
   void _renderFace(Canvas canvas, double w, double h) {

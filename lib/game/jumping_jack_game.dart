@@ -1,4 +1,5 @@
-import 'dart:math';
+import 'dart:math' as math;
+import 'dart:math' show Random, sqrt;
 
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
@@ -11,6 +12,7 @@ import '../services/game_progress.dart';
 import '../services/preferences.dart';
 import '../state/death_reason.dart';
 import '../state/game_state.dart';
+import '../ui/theme/jack_design.dart';
 import 'components/bot_player.dart';
 import 'components/bouncy_chain_trail.dart';
 import 'components/charge_aim_arrow.dart';
@@ -43,16 +45,43 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
   int _lastBroadcastScore = -1;
   double _myPosBroadcastTimer = 0;
   final Map<String, BotPlayer> _bots = {};
+  Iterable<BotPlayer> get aliveBots => _bots.values.where((b) => b.alive);
   CrystalPickup? _brPickup;
 
-  // Slot → ghost colour for remote players (matches the BR HUD palette).
-  static const _slotColors = <Color>[
-    GameConfig.playerColor,
-    Color(0xFF6CD8FF),
-    Color(0xFFFF6E94),
-    Color(0xFF7AE091),
-    Color(0xFFFFA64C),
-  ];
+  // ---- Pre-game flow ----
+  // 3 s "PRÊT?" countdown shown in both solo and BR before physics +
+  // input enable. In solo it gives the player a moment to focus after
+  // the tutorial dismisses; in BR it syncs the start across clients.
+  // The engine is paused while the tutorial overlay is open, so this
+  // value naturally freezes at 3.0 until the tutorial is dismissed.
+  double _startCountdown = 0;
+  double get startCountdown => _startCountdown;
+  bool get preGame => _startCountdown > 0;
+
+  // Win celebration: 3 s of camera zoom toward the winner before the BR
+  // result overlay slides in. Avoids the abrupt "the last opponent died →
+  // bam, leaderboard" cut by giving the eye a moment to land on the winner.
+  static const double brWinSequenceDuration = 3.0;
+  double _brWinSequenceTimer = 0;
+  bool _brWinSequenceTriggered = false;
+  String? _brWinnerId;
+  double get brWinSequenceTimer => _brWinSequenceTimer;
+  bool get brWinSequenceActive => _brWinSequenceTimer > 0;
+  String? get brWinnerId => _brWinnerId;
+  /// Progress 0 → 1 of the BR win sequence — used by `_applyCameraToWorld`
+  /// to lerp the world transform from "current view" to "zoomed on winner".
+  double get _brWinProgress => brWinSequenceActive
+      ? 1.0 - (_brWinSequenceTimer / brWinSequenceDuration).clamp(0.0, 1.0)
+      : 0.0;
+
+  /// Post-countdown safety window where no one can be eliminated — gives
+  /// every player a few seconds to read the situation before crushes,
+  /// camera-catches and falls start counting. Visualised in the BR HUD.
+  static const double brInvincibilityDuration = 10.0;
+  double _brInvincibilityRemaining = 0;
+  double get brInvincibilityRemaining => _brInvincibilityRemaining;
+  bool get brInvincibilityActive => _brInvincibilityRemaining > 0;
+
 
   late final GameWorld gameWorld;
   late final Player player;
@@ -148,6 +177,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       canSpawnVision: () => gameState.trajectoryBoostJumps == 0,
       seed: worldSeed,
       randomPickups: !isBattleRoyale,
+      densityFactor: _platformDensityFactor,
     );
     add(gameWorld);
     _recomputeViewport();
@@ -174,6 +204,12 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       _spawnBrPickup();
     }
   }
+
+  // ---- BR platform density ----
+  // Over-rideable in the GameWorld constructor so BR can spawn ~1.6×
+  // as many platforms as solo (camera follows the highest player and
+  // it's punishing without enough hop options).
+  double get _platformDensityFactor => isBattleRoyale ? 0.62 : 1.0;
 
   /// Spawns the single shared Battle Royale pickup at a deterministic
   /// platform so every client agrees on its position. Always a Crystal
@@ -205,9 +241,10 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
   /// platforms.
   void _syncRemotePlayers() {
     final svc = BattleRoyaleService.instance;
-    if (svc.phase == BrPhase.finished && !paused) {
-      pauseEngine();
-    }
+    // We deliberately do NOT pauseEngine() here when the match ends — the
+    // win sequence (`_tickWinSequence`) needs the engine running to animate
+    // the camera zoom on the winner. The engine is paused at the end of the
+    // sequence instead.
     // Apply the global slow-time effect on every client the moment any
     // player (or bot) grabs the shared BR pickup.
     if (svc.brPickupCollected && _brPickup != null) {
@@ -217,7 +254,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       gameWorld.add(FloatingScoreText(
         origin: Vector2(p.position.x, p.position.y - 24),
         label: 'RALENTI',
-        color: const Color(0xFF4FC3F7),
+        color: p.labelColor,
         fontSize: 20,
         life: 1.4,
         floatHeight: 70,
@@ -230,17 +267,19 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     for (final p in svc.players) {
       if (p.playerId == me) continue;
       final color =
-          _slotColors[p.slotIndex.clamp(0, _slotColors.length - 1)];
+          slotColor(p.slotIndex);
 
       var cube = _bots[p.playerId];
       if (cube == null) {
         final startX = _spawnXForSlot(p.slotIndex);
         if (p.isBot) {
           // Bots: AI mode for the leader, remote (lerp) for everyone else.
+          // All bots share the same baseline skill + lifespan so the match
+          // stays fair — no more "the orange one" feeling overpowered.
           final seed = (svc.roomId?.hashCode ?? 0) ^ p.slotIndex;
           final rng = Random(seed);
-          final skill = 0.65 + rng.nextDouble() * 0.85;
-          final lifespan = 22 + rng.nextDouble() * 70;
+          const skill = 1.0;
+          final lifespan = 40 + rng.nextDouble() * 30;
           cube = BotPlayer(
             playerId: p.playerId,
             name: p.name,
@@ -275,6 +314,8 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
 
   /// Only the leader checks bot deaths against the camera — single source
   /// of truth. Other clients receive the broadcast and align their state.
+  /// Note: the safety window does NOT block camera-catches; it only
+  /// prevents player-vs-player crushes during the first few seconds.
   void _checkBotDeaths() {
     if (!isBattleRoyale) return;
     if (_bots.isEmpty) return;
@@ -316,11 +357,13 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     return gameWorld.viewportWidth * f;
   }
 
-  /// Bot personality assigned per slot — gives the room four distinct
-  /// playstyles to compete with.
+  /// One profile per slot — same reach + skill across all of them, only
+  /// the target-picking strategy + rest rhythm vary. Without this
+  /// variance every bot would converge on the same platform and never
+  /// crush each other / fall off-screen.
   BotProfile _profileForSlot(int slot) {
     const profiles = [
-      BotProfile.bondisseur, // never assigned (slot 0 is always the local player)
+      BotProfile.bondisseur, // slot 0 = local player (never assigned)
       BotProfile.bondisseur,
       BotProfile.prudent,
       BotProfile.impatient,
@@ -355,10 +398,14 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
           : size.y,
     );
     final start = gameWorld.platforms.first;
-    player.position = Vector2(
-      start.position.x + start.size.x / 2,
-      start.topY,
-    );
+    // In BR, dispatch the local human at the same per-slot X used for bots/
+    // remote humans (`_spawnXForSlot`) so the 5 cubes spread across the
+    // starting platform instead of stacking in the middle. Solo keeps the
+    // platform-centered spawn.
+    final spawnX = isBattleRoyale
+        ? _spawnXForSlot(BattleRoyaleService.instance.mySlot ?? 0)
+        : start.position.x + start.size.x / 2;
+    player.position = Vector2(spawnX, start.topY);
     player.velocity = Vector2.zero();
     player.grounded = true;
     player.resetVisuals();
@@ -379,6 +426,15 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     _jumpStartY = player.position.y;
     _resetCharging();
 
+    // 3 s "PRÊT?" countdown for both modes. In solo it lets the player
+    // settle after the tutorial dismisses; in BR it syncs the start.
+    _startCountdown = 3.0;
+    _brInvincibilityRemaining =
+        isBattleRoyale ? brInvincibilityDuration : 0.0;
+    _brWinSequenceTimer = 0;
+    _brWinSequenceTriggered = false;
+    _brWinnerId = null;
+
     gameState.start();
     GameProgress.reset();
   }
@@ -392,6 +448,31 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     final isSpectating =
         isBattleRoyale && BattleRoyaleService.instance.spectator;
     final isPlaying = gameState.status == GameStatus.playing;
+
+    // 3 s pre-game countdown. Same shape for solo and BR — the world is
+    // frozen until the player has read "3 / 2 / 1 / GO". In solo this
+    // also waits behind the tutorial overlay (engine is paused there).
+    if (_startCountdown > 0) {
+      _startCountdown -= dt;
+      if (_startCountdown < 0) _startCountdown = 0;
+      _applyCameraToWorld();
+      return;
+    }
+
+    // Tick the BR invincibility window once gameplay is live.
+    if (isBattleRoyale && _brInvincibilityRemaining > 0) {
+      _brInvincibilityRemaining -= dt;
+      if (_brInvincibilityRemaining < 0) _brInvincibilityRemaining = 0;
+    }
+
+    // BR win celebration: 2 s slow-time + zoom on the winner before the
+    // result overlay appears. Update the BR win sequence (camera focus,
+    // slow factor) and skip player input.
+    _maybeStartWinSequence();
+    if (_brWinSequenceTimer > 0) {
+      _tickWinSequence(dt);
+      return;
+    }
 
     // Frozen state: not playing AND not spectating → nothing to do.
     if (!isPlaying && !isSpectating) return;
@@ -408,6 +489,12 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       _updatePlatformProximity();
       _checkBotDeaths();
       _checkBotPickupCollision();
+      // Bot-vs-bot crushes still need to fire while spectating — without
+      // this, two bots can stack on the same platform forever and neither
+      // dies, leaving the match unable to end.
+      if (BattleRoyaleService.instance.isLeader && !brInvincibilityActive) {
+        _checkBotsCrushBots();
+      }
       gameState.tick(dt);
       return;
     }
@@ -439,6 +526,13 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
         // Auto-collect pickups before the bouncy is destroyed by the launcher.
         _autoCollectPickupsOnPlatform(landedOn);
 
+        // Treat the bouncy touch as a successful landing for combo purposes
+        // — every green platform now extends the combo just like a regular
+        // platform would. `onJumpStart()` below immediately flips us back to
+        // airborne for the auto-launch, so the combo timer is preserved
+        // until the next ground touch.
+        gameState.onJumpLanded();
+
         // Bouncy chain — increment + reward popup at chain ≥ 2.
         _bouncyChainCount++;
         gameState.updateBouncyChain(_bouncyChainCount);
@@ -462,7 +556,13 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
         // Auto-launch toward the next platform above, predicting its position
         // if it's a moving target.
         final velocity = _computeBouncyLaunchVelocity(landedOn);
-        gameWorld.explodeAndRemove(landedOn);
+        // In Battle Royale, no platform ever disappears — the bouncy stays
+        // bouncy so any cube can re-use it. Convert it to standard would
+        // also work, but keeping it bouncy makes the BR arena feel
+        // platform-rich and rewards lateral routing.
+        if (!isBattleRoyale) {
+          gameWorld.explodeAndRemove(landedOn);
+        }
         player.lastLandedPlatform = null;
         player.launch(velocity);
         gameState.onJumpStart();
@@ -494,6 +594,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     _updatePlatformProximity();
     _checkBotDeaths();
     _checkBotPickupCollision();
+    _checkAllCrushes(dt);
     if (_checkDeath()) return;
 
     gameState.tick(dt);
@@ -511,10 +612,20 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       _myPosBroadcastTimer -= dt;
       if (_myPosBroadcastTimer <= 0) {
         _myPosBroadcastTimer = 0.1;
+        // Same "settled Y" the local camera uses for self-tracking — keeps
+        // remote clients' cameras in sync with where we've actually landed.
+        final settledY =
+            player.lastLandedPlatform?.topY ?? player.position.y;
+        final aim = player.aimDirection;
         BattleRoyaleService.instance.broadcastBotPosition(
           Preferences.playerId,
           player.position.x,
           player.position.y,
+          settledY,
+          chargeLevel: player.chargeLevel,
+          airborne: !player.grounded,
+          aimX: aim?.x ?? 0,
+          aimY: aim?.y ?? 0,
         );
       }
     }
@@ -619,13 +730,18 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
   /// above [from]. If the next platform is moving, predicts where it will be
   /// at arrival time. Falls back to a straight-up bounce if no platform is
   /// found above.
-  Vector2 _computeBouncyLaunchVelocity(Platform from) {
+  Vector2 _computeBouncyLaunchVelocity(Platform from) =>
+      _computeAutoLaunchVelocity(from.topY, exclude: from);
+
+  /// Generic helper used by both the bouncy launcher and the crush kill:
+  /// aims the player toward the nearest platform strictly above [fromY].
+  Vector2 _computeAutoLaunchVelocity(double fromY, {Platform? exclude}) {
     Platform? next;
     double bestDeltaY = double.infinity;
     for (final p in gameWorld.platforms) {
-      if (identical(p, from)) continue;
-      if (p.topY >= from.topY) continue; // not strictly above
-      final dy = from.topY - p.topY; // positive
+      if (exclude != null && identical(p, exclude)) continue;
+      if (p.topY >= fromY) continue; // not strictly above
+      final dy = fromY - p.topY;
       if (dy < bestDeltaY) {
         bestDeltaY = dy;
         next = p;
@@ -635,15 +751,14 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       return Vector2(0, -GameConfig.bouncyJumpPower);
     }
 
-    const t = 0.55; // time of flight (seconds)
+    const t = 0.55;
     final targetCenterX = next.predictedCenterX(t);
     final dx = targetCenterX - player.position.x;
-    final dy = next.topY - player.position.y; // negative (target is higher)
+    final dy = next.topY - player.position.y;
 
     var vx = dx / t;
     var vy = (dy - 0.5 * GameConfig.gravity * t * t) / t;
 
-    // Cap the magnitude at maxJumpPower so we don't exceed normal physics.
     final speed = sqrt(vx * vx + vy * vy);
     final maxSpeed = GameConfig.maxJumpPower;
     if (speed > maxSpeed) {
@@ -688,13 +803,41 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       offsetX = (_shakeRng.nextDouble() - 0.5) * 2 * amp;
       offsetY = (_shakeRng.nextDouble() - 0.5) * 2 * amp;
     }
+
+    // BR win sequence: smoothly zoom + recenter on the winner so the eye
+    // lands on them before the result overlay takes over. Replaces the
+    // earlier "freeze frame" feel which felt abrupt the second the last
+    // opponent died.
+    final winT = Curves.easeOutCubic.transform(_brWinProgress);
+    final winnerPos = brWinSequenceActive ? _brWinnerWorldPos() : null;
+    final extraScale = (winnerPos != null) ? 1.0 + 0.45 * winT : 1.0;
+    final effectiveScale = _worldScale * extraScale;
+
+    final baseX = _letterboxX + offsetX * _worldScale;
+    final baseY = _letterboxY + (_cameraY + offsetY) * _worldScale;
+
+    if (winnerPos != null) {
+      // Where the winner currently sits on screen with the regular camera.
+      final currentScreenX = baseX + winnerPos.x * _worldScale;
+      final currentScreenY = baseY + winnerPos.y * _worldScale;
+      // Where we want them to end up — slightly above center for headroom.
+      final targetScreenX = size.x / 2;
+      final targetScreenY = size.y * 0.55;
+      // Lerp the winner's screen anchor over the sequence, then derive the
+      // world position so they land at that anchor under the new scale.
+      final anchorX = currentScreenX + (targetScreenX - currentScreenX) * winT;
+      final anchorY = currentScreenY + (targetScreenY - currentScreenY) * winT;
+      final worldX = anchorX - winnerPos.x * effectiveScale;
+      final worldY = anchorY - winnerPos.y * effectiveScale;
+      gameWorld.position = Vector2(worldX, worldY);
+      gameWorld.scale = Vector2.all(effectiveScale);
+      return;
+    }
+
     // World coords are in virtual units. Scale + letterbox to the local
     // device so every client renders the same content with consistent
     // proportions, just with different black bars depending on aspect.
-    gameWorld.position = Vector2(
-      _letterboxX + offsetX * _worldScale,
-      _letterboxY + (_cameraY + offsetY) * _worldScale,
-    );
+    gameWorld.position = Vector2(baseX, baseY);
     gameWorld.scale = Vector2.all(_worldScale);
   }
 
@@ -751,6 +894,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       gameWorld.add(FloatingScoreText(
         origin: p.position.clone(),
         value: amount,
+        color: p.labelColor,
       ));
       AudioManager.pickupStar();
     } else if (p is CrystalPickup) {
@@ -758,7 +902,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       gameWorld.add(FloatingScoreText(
         origin: Vector2(p.position.x, p.position.y - 24),
         label: 'RALENTI',
-        color: const Color(0xFF4FC3F7),
+        color: p.labelColor,
         fontSize: 20,
         life: 1.4,
         floatHeight: 70,
@@ -769,7 +913,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       gameWorld.add(FloatingScoreText(
         origin: Vector2(p.position.x, p.position.y - 24),
         label: 'COMBO PROTÉGÉ',
-        color: const Color(0xFFFF6E94),
+        color: p.labelColor,
         fontSize: 20,
         life: 1.4,
         floatHeight: 70,
@@ -780,7 +924,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       gameWorld.add(FloatingScoreText(
         origin: Vector2(p.position.x, p.position.y - 24),
         label: 'VISION ×${GameConfig.visionBoostJumps}',
-        color: const Color(0xFFFFA64C),
+        color: p.labelColor,
         fontSize: 20,
         life: 1.4,
         floatHeight: 70,
@@ -791,7 +935,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       gameWorld.add(FloatingScoreText(
         origin: popupOrigin,
         label: 'TÉLÉPORT',
-        color: const Color(0xFFB14BFF),
+        color: p.labelColor,
         fontSize: 22,
         life: 1.4,
         floatHeight: 70,
@@ -873,12 +1017,22 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     _onLanded(0);
   }
 
-  /// Camera rises at base speed when the player is at or below the comfort
-  /// line, and accelerates only when the player drifts above it.
-  /// Difficulty ramp: speed is reduced before the first platform is reached
-  /// and linearly ramps back to 1.0 over the first
-  /// [cameraRiseRampPlatforms] platforms.
+  /// Camera rules.
+  ///
+  /// **Solo**: continuous time-based rise (with a comfort-line accelerator
+  /// when the player drifts up) — classic Doodle-Jump pressure.
+  ///
+  /// **Battle Royale**: NO auto-rise. The camera tracks the *highest* alive
+  /// climber across the room (local player + bots + remote humans, all of
+  /// which live in the [_bots] map plus [player]). Whoever is highest pulls
+  /// everyone else's view up; stragglers get caught off the bottom of the
+  /// screen and eliminated. Camera never moves down.
   void _riseCamera(double dt) {
+    if (isBattleRoyale) {
+      _riseCameraBr(dt);
+      return;
+    }
+
     final playerScreenY = player.position.y + _cameraY;
     final comfortY = _desiredPlayerScreenY;
     final factor = playerScreenY < comfortY && comfortY > 0
@@ -898,14 +1052,248 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     _cameraY += speed * dt;
   }
 
+  void _riseCameraBr(double dt) {
+    // Use **settled** positions only (= last platform a cube actually
+    // landed on). Following the live position would chase every arc peak
+    // and feel jittery / too aggressive.
+    var topY = double.infinity;
+    final svc = BattleRoyaleService.instance;
+    if (gameState.status == GameStatus.playing && !svc.myDead) {
+      // Local player: their last landed platform is the authoritative
+      // settled position. Falls back to current Y if nothing landed yet.
+      final landed = player.lastLandedPlatform;
+      topY = landed?.topY ?? player.position.y;
+    }
+    for (final bot in _bots.values) {
+      if (!bot.alive) continue;
+      // Bots/remote humans expose lastSettledY, refreshed on each jump
+      // completion (and on load). This skips arc peaks entirely.
+      final y = bot.lastSettledY;
+      if (y < topY) topY = y;
+    }
+    if (!topY.isFinite) return; // no one alive — freeze the camera
+
+    // Keep the topmost player at the comfort line so they have room above
+    // to read what they're climbing toward.
+    final desired = -(topY - _desiredPlayerScreenY);
+    if (desired <= _cameraY) return; // never lower the camera
+
+    // Smooth approach. Start with an exponential pull toward the target
+    // (feels organic), then cap by the solo base rise speed so the camera
+    // can't physically run faster than a player can chase.
+    final remaining = desired - _cameraY;
+    final exp = remaining * (1.0 - math.exp(-3.0 * dt));
+    final maxStep = GameConfig.cameraRiseSpeed * 1.4 * dt;
+    _cameraY += exp.clamp(0.0, maxStep);
+  }
+
+  /// Mario-style head crush — runs three checks each frame:
+  ///   • Local player crushes a bot/remote (we're falling onto someone)
+  ///   • A bot/remote crushes the local player (someone descending lands on us)
+  ///   • Bot vs bot (leader-only, since the leader owns the bot AI positions)
+  ///
+  /// Each pair only fires once per frame; the crusher gets bonus + auto-aim
+  /// or (for bots) just keeps climbing.
+  void _checkAllCrushes(double dt) {
+    if (!isBattleRoyale) return;
+    if (_bots.isEmpty) return;
+    // Safety window: crushes are completely disabled in the first
+    // [brInvincibilityDuration] seconds of the match.
+    if (brInvincibilityActive) return;
+    _checkPlayerCrushBots(dt);
+    _checkBotsCrushPlayer();
+    if (BattleRoyaleService.instance.isLeader) {
+      _checkBotsCrushBots();
+    }
+  }
+
+  /// Local player landing on a bot's head from above.
+  void _checkPlayerCrushBots(double dt) {
+    if (player.grounded) return;
+    if (player.velocity.y <= 0) return;
+
+    final feetY = player.position.y;
+    final prevFeetY = feetY - player.velocity.y * dt;
+    final halfW = player.size.x / 2;
+    final left = player.position.x - halfW;
+    final right = player.position.x + halfW;
+
+    for (final bot in _bots.values) {
+      if (!bot.alive) continue;
+      final botHeadY = bot.position.y - bot.size.y;
+      final botHalfW = bot.size.x / 2;
+      final overlapsX = right > bot.position.x - botHalfW &&
+          left < bot.position.x + botHalfW;
+      final crossedTop = prevFeetY <= botHeadY + 4 && feetY >= botHeadY - 4;
+      if (!overlapsX || !crossedTop) continue;
+
+      bot.markDeadLocal();
+      BattleRoyaleService.instance.broadcastCrushKill(
+        bot.playerId,
+        killerId: Preferences.playerId,
+      );
+      AudioManager.brDeath();
+      AudioManager.bouncy();
+
+      final velocity = _computeAutoLaunchVelocity(player.position.y);
+      player.launch(velocity);
+      gameState.onJumpStart();
+
+      // Flat +500 per crush kill (no combo multiplier — kills are their
+      // own dimension, separate from height-based score).
+      const bonus = 500;
+      gameState.addBonus(bonus);
+      gameWorld.add(FloatingScoreText(
+        origin: Vector2(
+          player.position.x,
+          player.position.y - player.size.y - 36,
+        ),
+        label: 'CRUSH! +$bonus',
+        color: const Color(0xFFFF5E5B),
+        fontSize: 21,
+        life: 1.5,
+        floatHeight: 90,
+      ));
+      return;
+    }
+  }
+
+  /// A descending bot/remote landing on the local player's head.
+  void _checkBotsCrushPlayer() {
+    if (gameState.status != GameStatus.playing) return;
+    if (BattleRoyaleService.instance.myDead) return;
+
+    // Local player head Y (anchor is bottomCenter, height = size.y).
+    final headY = player.position.y - player.size.y;
+    final halfW = player.size.x / 2;
+    final left = player.position.x - halfW;
+    final right = player.position.x + halfW;
+
+    for (final bot in _bots.values) {
+      if (!bot.alive) continue;
+      if (!bot.descending) continue;
+      // Bot anchor is bottomCenter — feet = position.y.
+      final feetY = bot.position.y;
+      final prevFeet = bot.prevY;
+      final botHalfW = bot.size.x / 2;
+      final overlapsX = right > bot.position.x - botHalfW &&
+          left < bot.position.x + botHalfW;
+      final crossedHead = prevFeet <= headY + 4 && feetY >= headY - 4;
+      if (!overlapsX || !crossedHead) continue;
+      // We just got squashed — note the killer so the feed says
+      // "BOT_X t'a écrasé".
+      _crushedByPlayerId = bot.playerId;
+      _handleDeath(DeathReason.crushed);
+      return;
+    }
+  }
+
+  /// ID of the bot/remote that crushed us this frame, used to attribute
+  /// the kill in the BR feed. Reset on each new run.
+  String? _crushedByPlayerId;
+
+  /// Bot vs bot — leader-authoritative.
+  ///
+  /// Lenient detection: any time two cubes overlap horizontally AND one
+  /// sits *clearly* above the other (its feet are above the lower cube's
+  /// body mid-line), the upper one crushes the lower one. We don't
+  /// strictly require a descending arc cross — bots are scripted with
+  /// discrete arcs that can skip over a "head crossing" frame, so the
+  /// strict Mario rule under-fires for them.
+  void _checkBotsCrushBots() {
+    final list = _bots.values.where((b) => b.alive).toList(growable: false);
+    if (list.length < 2) return;
+    for (final crusher in list) {
+      final cFeet = crusher.position.y;
+      final cHalfW = crusher.size.x / 2;
+      for (final victim in list) {
+        if (identical(crusher, victim)) continue;
+        if (!victim.alive) continue;
+        final vHalfW = victim.size.x / 2;
+        final overlapsX =
+            crusher.position.x + cHalfW > victim.position.x - vHalfW &&
+                crusher.position.x - cHalfW < victim.position.x + vHalfW;
+        if (!overlapsX) continue;
+        // Crusher must be visibly above the victim — its feet at or
+        // above the victim's body mid-line. Tolerance keeps "side-by-
+        // side on the same platform" from falsely registering as a
+        // crush. World Y grows downward, so smaller Y = higher.
+        final vMidY = victim.position.y - victim.size.y * 0.5;
+        if (cFeet > vMidY) continue;
+        victim.markDeadLocal();
+        BattleRoyaleService.instance.broadcastCrushKill(
+          victim.playerId,
+          killerId: crusher.playerId,
+        );
+        crusher.addCrushBonus();
+        AudioManager.brDeath();
+      }
+    }
+  }
+
+  /// Detect the moment the BR match ends and kick off the celebration:
+  /// camera zoom on the winner for [brWinSequenceDuration] seconds before
+  /// the result screen takes over.
+  void _maybeStartWinSequence() {
+    if (!isBattleRoyale || _brWinSequenceTriggered) return;
+    final svc = BattleRoyaleService.instance;
+    if (svc.phase != BrPhase.finished) return;
+    final winner = svc.winnerId;
+    if (winner == null) return;
+    _brWinSequenceTriggered = true;
+    _brWinnerId = winner;
+    _brWinSequenceTimer = brWinSequenceDuration;
+  }
+
+  void _tickWinSequence(double dt) {
+    _brWinSequenceTimer -= dt;
+    if (_brWinSequenceTimer < 0) _brWinSequenceTimer = 0;
+    // Camera zoom + recenter on the winner is computed in
+    // `_applyCameraToWorld` based on `_brWinProgress` so a single transform
+    // pass handles both the regular HUD frame and the celebration.
+    _applyCameraToWorld();
+    // Once the celebration finishes, freeze the engine so nothing else
+    // ticks underneath the result overlay (camera, particles, bots).
+    if (_brWinSequenceTimer == 0 && !paused) {
+      pauseEngine();
+    }
+  }
+
+  /// Winner cube's current world position — null if we don't have one (e.g.
+  /// the match ended without an outright winner). Used during the win
+  /// sequence to anchor the camera zoom.
+  Vector2? _brWinnerWorldPos() {
+    final id = _brWinnerId;
+    if (id == null) return null;
+    if (id == Preferences.playerId) return player.position.clone();
+    final cube = _bots[id];
+    return cube?.position.clone();
+  }
+
   void _spawnAndCull() {
     final visibleTopWorldY = -_cameraY;
     final visibleBottomWorldY = visibleTopWorldY + size.y;
-    gameWorld.ensureCovered(visibleTopWorldY - 100);
+
+    // Cover at least the visible viewport. In BR we also extend the
+    // generation up to wherever the highest live opponent currently is
+    // (their broadcast position can be far above our camera while we're
+    // catching up in spectator mode — without this, bots appear to jump
+    // on "invisible" platforms).
+    var targetTopY = visibleTopWorldY - 100;
+    if (isBattleRoyale) {
+      for (final bot in _bots.values) {
+        if (!bot.alive) continue;
+        final botY = bot.position.y - 240; // small buffer above
+        if (botY < targetTopY) targetTopY = botY;
+      }
+    }
+    gameWorld.ensureCovered(targetTopY);
     gameWorld.cleanupBelow(visibleBottomWorldY + 200);
   }
 
   bool _checkDeath() {
+    // Note: the safety window does NOT block falling off the bottom; it
+    // only prevents player-vs-player crushes during the first few seconds.
     // Side walls bounce the player back instead of killing them — only the
     // bottom (camera catching up) and being engulfed off the bottom kills.
     final playerScreenY = player.position.y + _cameraY;
@@ -971,7 +1359,10 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     }
     if (isBattleRoyale) {
       BattleRoyaleService.instance.updateMyScore(gameState.score);
-      BattleRoyaleService.instance.reportMyDeath();
+      BattleRoyaleService.instance
+          .reportMyDeath(killerId: _crushedByPlayerId);
+      _crushedByPlayerId = null;
+      AudioManager.brDeath();
       // BR: keep the music going so the spectator view stays alive.
     } else {
       AudioManager.playGameOverJingle();
@@ -1007,11 +1398,17 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     );
     preview.startPos = player.centerWorld;
     preview.initialVelocity = velocity;
-    // Vision pickup overrides the natural fade for N jumps. Otherwise linear
-    // fade from 1.0 (no jumps yet) to 0.0 (3+ platforms reached).
+    // Vision pickup overrides the natural fade for N jumps. Otherwise:
+    //  • Solo  → fast skill ramp (dots fade out over 3 platforms)
+    //  • BR    → no trajectory dots at all, only the aim arrow. The user
+    //            wants BR to be more skill-driven without the parabola
+    //            preview, so visibility is forced to 0 unless a Vision
+    //            pickup boost is active.
     preview.visibility = gameState.trajectoryBoostJumps > 0
         ? 1.0
-        : (1.0 - gameState.platformsReached / 3.0).clamp(0.0, 1.0);
+        : isBattleRoyale
+            ? 0.0
+            : (1.0 - gameState.platformsReached / 3.0).clamp(0.0, 1.0);
     preview.active = true;
     // Feed the aim direction (normalized) to the player so the cube tilts
     // and the aim arrow renders.
@@ -1074,6 +1471,9 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     super.onDragStart(event);
     if (gameState.status != GameStatus.playing) return;
     if (!player.grounded) return;
+    // Ignore taps while the "3 / 2 / 1 / GO" countdown is up — keeps the
+    // player from accidentally launching before the start signal.
+    if (preGame) return;
     _charging = true;
     _chargeMs = 0;
     _fingerScreenPos = event.localPosition;

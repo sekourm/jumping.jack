@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 
-import '../../game/config.dart';
 import '../../game/jumping_jack_game.dart';
 import '../../i18n/i18n.dart';
 import '../../services/audio_manager.dart';
 import '../../services/preferences.dart';
 import '../../state/game_state.dart';
+import '../theme/jack_design.dart';
 import '../widgets/cosmic_background.dart';
 import '../widgets/fortnite_button.dart';
+import '../widgets/jack_ico.dart';
+import '../widgets/jack_logo.dart';
 import '../widgets/particle_score.dart';
 
 class DeathOverlay extends StatelessWidget {
@@ -25,15 +27,15 @@ class DeathOverlay extends StatelessWidget {
         return Stack(
           children: [
             Positioned.fill(
-              child: CosmicBackground(platforms: state.platformsReached),
+              child: CosmicBackground(stage: JackStage.dark),
             ),
             Container(color: Colors.black.withValues(alpha: 0.55)),
             SafeArea(
               child: Center(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 28,
+                    horizontal: 22,
+                    vertical: 22,
                   ),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 380),
@@ -49,8 +51,6 @@ class DeathOverlay extends StatelessWidget {
   }
 }
 
-/// Stateful so the entrance animation only plays once per death (not on
-/// every parent rebuild driven by GameState ticks).
 class _DeathContent extends StatefulWidget {
   const _DeathContent({required this.game, required this.state});
   final JumpingJackGame game;
@@ -95,12 +95,14 @@ class _DeathContentState extends State<_DeathContent>
   Widget build(BuildContext context) {
     final state = widget.state;
     final game = widget.game;
+    final showDelta = state.newBest ||
+        (Preferences.bestScore > 0 && state.score < Preferences.bestScore);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _stagger(const _GameOverTitle(), 0.0, 0.30),
-        const SizedBox(height: 22),
+        _stagger(JackEndLogo(text: I18n.t.gameOver, gold: true), 0.0, 0.30),
+        const SizedBox(height: 18),
         if (state.newBest) ...[
           _stagger(const _NewBestRibbon(), 0.15, 0.50),
           const SizedBox(height: 16),
@@ -110,110 +112,57 @@ class _DeathContentState extends State<_DeathContent>
             score: state.score,
             bestScore: Preferences.bestScore,
             isNewBest: state.newBest,
+            showDelta: showDelta,
           ),
           0.25,
-          0.60,
+          0.65,
         ),
         const SizedBox(height: 14),
-        _stagger(
-          _BestTile(score: Preferences.bestScore),
-          0.40,
-          0.75,
-        ),
+        _stagger(_BestTile(score: Preferences.bestScore), 0.40, 0.80),
         const SizedBox(height: 28),
         _stagger(
-          FortniteButton(
-            label: I18n.t.replay,
-            icon: Icons.replay_rounded,
-            height: 60,
-            onPressed: () {
-              AudioManager.click();
-              AudioManager.startGameMusic();
-              game.restart();
-            },
-          ),
-          0.55,
-          0.90,
-        ),
-        const SizedBox(height: 12),
-        _stagger(
-          FortniteButton(
-            label: I18n.t.menu,
-            icon: Icons.home_rounded,
-            style: FortniteButtonStyle.secondary,
-            height: 56,
-            fontSize: 16,
-            onPressed: () {
-              AudioManager.click();
-              AudioManager.startMenuMusic();
-              Navigator.of(context).pop();
-            },
-          ),
-          0.65,
-          1.00,
-        ),
-      ],
-    );
-  }
-}
-
-class _GameOverTitle extends StatelessWidget {
-  const _GameOverTitle();
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Text(
-          I18n.t.gameOver,
-          style: TextStyle(
-            fontSize: 44,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 6,
-            height: 1,
-            foreground: Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 6
-              ..color = Colors.black.withValues(alpha: 0.85),
-          ),
-        ),
-        ShaderMask(
-          shaderCallback: (rect) => const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFFFFE198),
-              Color(0xFFFFC857),
-              Color(0xFFFF9C2A),
-            ],
-            stops: [0.0, 0.55, 1.0],
-          ).createShader(rect),
-          child: Text(
-            I18n.t.gameOver,
-            style: TextStyle(
-              fontSize: 44,
-              fontWeight: FontWeight.w900,
-              color: Colors.white,
-              letterSpacing: 6,
-              height: 1,
-              shadows: [
-                Shadow(
-                  color: GameConfig.playerColor.withValues(alpha: 0.65),
-                  blurRadius: 22,
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Row(
+              // Same layout + color vocabulary as the Battle Royale end
+              // screen so both result overlays read as one family: MENU
+              // (cyan, secondary) on the left, REJOUER (epic / purple,
+              // primary CTA) on the right.
+              children: [
+                Expanded(
+                  child: FortniteButton(
+                    label: I18n.t.menu,
+                    icoName: IcoName.home,
+                    style: FortniteButtonStyle.cyan,
+                    height: 56,
+                    fontSize: 14,
+                    onPressed: () {
+                      AudioManager.click();
+                      AudioManager.startMenuMusic();
+                      Navigator.of(context).pop();
+                    },
+                  ),
                 ),
-                Shadow(
-                  color: GameConfig.playerColor.withValues(alpha: 0.30),
-                  blurRadius: 44,
-                ),
-                const Shadow(
-                  color: Colors.black87,
-                  blurRadius: 8,
-                  offset: Offset(0, 4),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FortniteButton(
+                    label: I18n.t.replay,
+                    icoName: IcoName.play,
+                    style: FortniteButtonStyle.epic,
+                    height: 56,
+                    fontSize: 14,
+                    onPressed: () {
+                      AudioManager.click();
+                      AudioManager.startGameMusic();
+                      game.restart();
+                    },
+                  ),
                 ),
               ],
             ),
           ),
+          0.55,
+          1.00,
         ),
       ],
     );
@@ -231,7 +180,7 @@ class _NewBestRibbonState extends State<_NewBestRibbon>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 900),
+    duration: const Duration(milliseconds: 1400),
   )..repeat(reverse: true);
 
   @override
@@ -242,46 +191,37 @@ class _NewBestRibbonState extends State<_NewBestRibbon>
 
   @override
   Widget build(BuildContext context) {
-    final accent = GameConfig.playerColor;
     return AnimatedBuilder(
       animation: _ctrl,
-      builder: (context, _) {
+      builder: (_, child) {
         final t = Curves.easeInOut.transform(_ctrl.value);
-        final glow = 16.0 + 14.0 * t;
-        final scale = 1.0 + 0.04 * t;
         return Transform.scale(
-          scale: scale,
+          scale: 1.0 + 0.04 * t,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             decoration: BoxDecoration(
-              color: accent,
-              borderRadius: BorderRadius.circular(999),
+              gradient: JackDesign.btnPrimary,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: JackDesign.brown, width: 2),
               boxShadow: [
+                const BoxShadow(
+                  color: JackDesign.brown,
+                  offset: Offset(0, 3),
+                ),
                 BoxShadow(
-                  color: accent.withValues(alpha: 0.65),
-                  blurRadius: glow,
+                  color: JackDesign.yellow.withValues(alpha: 0.40),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
                 ),
               ],
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.emoji_events,
-                  color: GameConfig.bgColor,
-                  size: 18,
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  I18n.t.newRecord,
-                  style: const TextStyle(
-                    color: GameConfig.bgColor,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 4,
-                  ),
-                ),
-              ],
+            child: Text(
+              '★ ${I18n.t.newRecord} ★',
+              style: JackDesign.bungee(
+                fontSize: 12,
+                color: JackDesign.brownInk,
+                letterSpacing: 1.6,
+              ),
             ),
           ),
         );
@@ -295,33 +235,47 @@ class _ScoreCard extends StatelessWidget {
     required this.score,
     required this.bestScore,
     required this.isNewBest,
+    required this.showDelta,
   });
   final int score;
   final int bestScore;
   final bool isNewBest;
+  final bool showDelta;
 
   @override
   Widget build(BuildContext context) {
-    final showDelta = isNewBest || (bestScore > 0 && score < bestScore);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 22),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.10),
-          width: 1.4,
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.white.withValues(alpha: 0.04),
+            Colors.black.withValues(alpha: 0.32),
+          ],
         ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: JackDesign.yellow.withValues(alpha: 0.28),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: JackDesign.yellow.withValues(alpha: 0.08),
+            blurRadius: 24,
+          ),
+        ],
       ),
       child: Column(
         children: [
           ParticleScore(
             score: score,
-            dotSize: 8,
-            digitGap: 7,
-            captionFontSize: 12,
-            captionLetterSpacing: 7,
+            dotSize: 9,
+            digitGap: 8,
+            captionFontSize: 11,
+            captionLetterSpacing: 2.5,
             captionGap: 8,
           ),
           if (showDelta) ...[
@@ -353,22 +307,22 @@ class _DeltaLine extends StatelessWidget {
     if (isNewBest) {
       return Text(
         I18n.t.recordBeaten,
-        style: TextStyle(
-          color: GameConfig.playerColor,
-          fontSize: 12,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 4,
+        style: JackDesign.manrope(
+          fontSize: 11,
+          weight: FontWeight.w800,
+          color: JackDesign.green,
+          letterSpacing: 2.5,
         ),
       );
     }
     final delta = bestScore - score;
     return Text(
       I18n.t.distanceFromRecord(delta),
-      style: const TextStyle(
-        color: GameConfig.textMuted,
-        fontSize: 12,
-        fontWeight: FontWeight.w800,
-        letterSpacing: 3,
+      style: JackDesign.manrope(
+        fontSize: 11,
+        weight: FontWeight.w800,
+        color: Colors.white.withValues(alpha: 0.70),
+        letterSpacing: 2.0,
       ),
     );
   }
@@ -380,47 +334,59 @@ class _BestTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = GameConfig.playerColor;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: accent.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(10),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.white.withValues(alpha: 0.04),
+            Colors.black.withValues(alpha: 0.30),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: accent.withValues(alpha: 0.22),
-          width: 1.2,
+          color: Colors.white.withValues(alpha: 0.10),
+          width: 1.5,
         ),
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            children: [
-              Icon(
-                Icons.emoji_events,
-                color: accent.withValues(alpha: 0.9),
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: JackDesign.yellow.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Center(
+              child: JackIco(
+                name: IcoName.trophy,
                 size: 18,
+                color: JackDesign.yellow,
               ),
-              const SizedBox(width: 10),
-              Text(
-                I18n.t.bestLabel,
-                style: TextStyle(
-                  color: accent.withValues(alpha: 0.9),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 2.5,
-                ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              I18n.t.bestLabel,
+              style: JackDesign.manrope(
+                fontSize: 11,
+                weight: FontWeight.w800,
+                color: Colors.white.withValues(alpha: 0.70),
+                letterSpacing: 2.5,
               ),
-            ],
+            ),
           ),
           Text(
             '$score',
-            style: TextStyle(
-              color: accent,
+            style: JackDesign.bungee(
               fontSize: 22,
-              fontWeight: FontWeight.w900,
-              height: 1,
+              color: JackDesign.yellow,
+              feature: const FontFeature.tabularFigures(),
             ),
           ),
         ],
@@ -428,4 +394,3 @@ class _BestTile extends StatelessWidget {
     );
   }
 }
-

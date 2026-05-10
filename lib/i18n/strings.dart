@@ -14,6 +14,9 @@ abstract class Strings {
   String get bestLabel;
   String comingSoon(String mode);
   String get backendNotConfigured;
+  String get editName;
+  String get save;
+  String get pseudoLabel;
 
   // ---- Settings ----
   String get audioSection;
@@ -33,6 +36,8 @@ abstract class Strings {
   String get tutorialRelease;
   String get tutorialReleaseDesc;
   String get ready;
+  String get next;
+  String get back;
   String get dontShowAgain;
 
   // ---- Solo death overlay ----
@@ -54,9 +59,14 @@ abstract class Strings {
   String get matchClosed;
   String get errorTitle;
   String get waitingSlot;
+  String get searchingSlot;
   String get you;
   String get bot;
   String get cancel;
+  /// Lobby-specific replacement for [cancel]: once matchmaking is past
+  /// the cancellation window, the button still exists (greyed) but its
+  /// label flips to a more honest "leave" verb.
+  String get leaveLobby;
   String get matchReadyPlaceholder;
 
   // ---- BR result ----
@@ -72,4 +82,26 @@ abstract class Strings {
   String get backToMenu;
   String get pointsShort;
   String get replayBattleRoyale;
+  String get winnerLabel;
+  String get ranking;
+  String get aliveLabel;
+  String get spectatorLabel;
+  // ---- BR kill feed ----
+  String feedDied(String name);
+  String feedKilled(String killer, String victim);
+  String feedLead(String name);
+
+  // ---- Recovery code ----
+  String get recoveryCodeLabel;
+  String get recoveryCodeHelp;
+  String get copyCode;
+  String get codeCopied;
+  String get restoreProfile;
+  String get restoreProfileTitle;
+  String get restoreProfileDesc;
+  String get pasteCodeHint;
+  String get restoreCta;
+  String get restoreSuccess;
+  String get restoreInvalidCode;
+  String get restoreNotFound;
 }

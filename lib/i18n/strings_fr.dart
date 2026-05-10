@@ -23,6 +23,12 @@ class StringsFr implements Strings {
   String comingSoon(String mode) => '$mode — bientôt disponible';
   @override
   String get backendNotConfigured => 'BATTLE ROYALE — backend non configuré';
+  @override
+  String get editName => 'MODIFIER LE PSEUDO';
+  @override
+  String get save => 'ENREGISTRER';
+  @override
+  String get pseudoLabel => 'PSEUDO';
 
   // Settings
   @override
@@ -42,7 +48,7 @@ class StringsFr implements Strings {
 
   // Tutorial
   @override
-  String tutorialStep(int n) => 'TUTORIEL  —  $n / 3';
+  String tutorialStep(int n) => '$n / 3';
   @override
   String get tutorialHold => 'MAINTIENS';
   @override
@@ -58,7 +64,11 @@ class StringsFr implements Strings {
   @override
   String get ready => 'JE SUIS PRÊT';
   @override
-  String get dontShowAgain => 'Ne plus afficher';
+  String get next => 'SUIVANT';
+  @override
+  String get back => 'RETOUR';
+  @override
+  String get dontShowAgain => "T'inquiète j'ai capté";
 
   // Death overlay
   @override
@@ -96,11 +106,15 @@ class StringsFr implements Strings {
   @override
   String get waitingSlot => 'EN ATTENTE…';
   @override
+  String get searchingSlot => 'RECHERCHE…';
+  @override
   String get you => 'TOI';
   @override
   String get bot => 'BOT';
   @override
   String get cancel => 'ANNULER';
+  @override
+  String get leaveLobby => 'QUITTER';
   @override
   String get matchReadyPlaceholder =>
       'Match prêt — gameplay multijoueur en phase 2';
@@ -117,7 +131,7 @@ class StringsFr implements Strings {
   @override
   String get quit => 'QUITTER';
   @override
-  String get victory => 'VICTOIRE !';
+  String get victory => 'TOP 1';
   @override
   String get matchOverTitle => 'TERMINÉ';
   @override
@@ -130,4 +144,46 @@ class StringsFr implements Strings {
   String get pointsShort => 'pts';
   @override
   String get replayBattleRoyale => 'NOUVELLE PARTIE';
+  @override
+  String get winnerLabel => 'TOP 1';
+  @override
+  String get ranking => 'CLASSEMENT';
+  @override
+  String get aliveLabel => 'VIVANTS';
+  @override
+  String get spectatorLabel => 'SPECTATEUR';
+  @override
+  String feedDied(String name) => '$name est mort';
+  @override
+  String feedKilled(String killer, String victim) =>
+      '$killer a tué $victim';
+  @override
+  String feedLead(String name) => '$name prend la tête';
+
+  @override
+  String get recoveryCodeLabel => 'CODE DE SAUVEGARDE';
+  @override
+  String get recoveryCodeHelp =>
+      'Note ce code. Il te permet de retrouver ton profil sur un autre navigateur ou après une réinstallation.';
+  @override
+  String get copyCode => 'COPIER';
+  @override
+  String get codeCopied => 'CODE COPIÉ';
+  @override
+  String get restoreProfile => 'RESTAURER UN PROFIL';
+  @override
+  String get restoreProfileTitle => 'RESTAURER UN PROFIL';
+  @override
+  String get restoreProfileDesc =>
+      'Colle ton code de sauvegarde pour récupérer ton pseudo, ton meilleur score et tes victoires BR.';
+  @override
+  String get pasteCodeHint => 'JJ-XXXX-XXXX';
+  @override
+  String get restoreCta => 'RESTAURER';
+  @override
+  String get restoreSuccess => 'PROFIL RESTAURÉ';
+  @override
+  String get restoreInvalidCode => 'CODE INVALIDE';
+  @override
+  String get restoreNotFound => 'AUCUN PROFIL POUR CE CODE';
 }

@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
+import '../../ui/theme/jack_design.dart';
 import '../config.dart';
 
 /// Trajectory preview rendered as a row of static "energy" dots evenly spaced
@@ -24,8 +25,15 @@ class TrajectoryPreview extends Component {
   static const int _skipSteps = 1;
   static const double _stepDt = 0.035;
 
-  static const Color _color = Color(0xFFFFEB3B);
-  static const Color _coreColor = Color(0xFFFFFDE0);
+  // Palette aligned with the rest of the UI (JackDesign): warm yellow
+  // gradient outer / brighter highlight inner — matches the buttons + the
+  // tutorial slider dots so the trajectory reads like part of the same
+  // family.
+  static const Color _haloColor = JackDesign.yellow;       // soft glow
+  static const Color _outerColor = JackDesign.yellow;      // dot edge
+  static const Color _innerColor = JackDesign.yellowHi;    // dot face
+  static const Color _coreColor = Color(0xFFFFF6D6);       // bright core
+  static const Color _ringColor = JackDesign.brown;        // hard outline
 
   double _elapsed = 0;
   bool _wasActive = false;
@@ -87,18 +95,43 @@ class TrajectoryPreview extends Component {
       }
 
       final p = Offset(pos.x, pos.y);
+      // Soft yellow halo behind every dot — same vocabulary as the .fbtn
+      // glow shadows, just shrunken to the dot's scale.
+      canvas.drawCircle(
+        p,
+        radius * 2.0,
+        Paint()
+          ..color = _haloColor.withValues(alpha: alpha * 0.22)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
+      );
+      // Outer dot — warm yellow.
       canvas.drawCircle(
         p,
         radius,
-        Paint()..color = _color.withValues(alpha: alpha),
+        Paint()..color = _outerColor.withValues(alpha: alpha),
       );
-      // Bright core only on the first few dots — they sit closest to the
-      // player and act as the "head of energy".
+      // Inner highlight ring — brighter yellow, gives the dot its volume.
+      canvas.drawCircle(
+        p,
+        radius * 0.72,
+        Paint()..color = _innerColor.withValues(alpha: alpha),
+      );
+      // Bright core + brown outline only on the first few dots — they sit
+      // closest to the player and act as the "head of energy" with the
+      // same palette as the fortnite-style buttons.
       if (i < 3) {
         canvas.drawCircle(
           p,
-          radius * 0.5,
+          radius * 0.42,
           Paint()..color = _coreColor.withValues(alpha: alpha),
+        );
+        canvas.drawCircle(
+          p,
+          radius,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.8
+            ..color = _ringColor.withValues(alpha: alpha * 0.85),
         );
       }
     }

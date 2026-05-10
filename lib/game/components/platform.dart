@@ -112,26 +112,26 @@ class Platform extends PositionComponent {
     _renderCracks(canvas);
   }
 
-  // ---- Standard: white sky cloud ----
+  // ---- Standard: white sky cloud (matches design handoff palette) ----
   void _renderAsteroid(Canvas canvas) {
     _renderCloud(
       canvas,
-      body: const Color(0xFFE2EBF6),
-      mid: const Color(0xFFF6FAFF),
+      body: const Color(0xFFFFFFFF),
+      mid: const Color(0xFFFFFFFF),
       highlight: const Color(0xFFFFFFFF),
-      shadow: const Color(0xFF4F6378),
+      shadow: const Color(0xFFC8CDD6),
       outline: const Color(0xFF13202D),
     );
   }
 
-  // ---- Moving: warm peach/orange sunset cloud ----
+  // ---- Moving: warm peach (#FFB890) ----
   void _renderHovercraft(Canvas canvas) {
     _renderCloud(
       canvas,
-      body: const Color(0xFFFFB264),
-      mid: const Color(0xFFFFD3A8),
-      highlight: const Color(0xFFFFEEDA),
-      shadow: const Color(0xFF6B2D08),
+      body: const Color(0xFFFFB890),
+      mid: const Color(0xFFFFCFAB),
+      highlight: const Color(0xFFFFE7CE),
+      shadow: const Color(0xFFA35C3A),
       outline: const Color(0xFF2A1004),
     );
   }
@@ -157,10 +157,10 @@ class Platform extends PositionComponent {
     );
     _renderCloud(
       canvas,
-      body: const Color(0xFF6FD686),
-      mid: const Color(0xFFB8F0C4),
+      body: const Color(0xFFA8EDB6),
+      mid: const Color(0xFFC4F4CC),
       highlight: const Color(0xFFE3FBC8),
-      shadow: const Color(0xFF154A24),
+      shadow: const Color(0xFF3D8F4F),
       outline: const Color(0xFF062612),
     );
     // Up-arrows on top so it reads as a booster.

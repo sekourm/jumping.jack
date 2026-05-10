@@ -17,6 +17,7 @@ class GameWorld extends PositionComponent {
     this.canSpawnVision,
     int? seed,
     this.randomPickups = true,
+    this.densityFactor = 1.0,
   }) : _rng = Random(seed);
 
   double viewportWidth;
@@ -31,6 +32,11 @@ class GameWorld extends PositionComponent {
   /// spawned manually by [JumpingJackGame] instead of the per-platform
   /// random spawner.
   final bool randomPickups;
+
+  /// Spacing multiplier — `1.0` = solo defaults, `0.55` = much denser
+  /// platforms (used in Battle Royale where the camera is aggressive and
+  /// players need more options to keep climbing).
+  final double densityFactor;
   double _highestY = 0; // y of last spawned (highest) platform
   int _spawnIndex = 0;
   int _platformsSinceLastPickup = 0;
@@ -127,8 +133,9 @@ class GameWorld extends PositionComponent {
   void _spawnNext() {
     _spawnIndex++;
     final difficulty = _difficulty(_spawnIndex);
-    final dy = GameConfig.platformBaseSpacingY +
-        difficulty * _rng.nextDouble() * GameConfig.platformMaxExtraSpacingY;
+    final dy = (GameConfig.platformBaseSpacingY +
+            difficulty * _rng.nextDouble() * GameConfig.platformMaxExtraSpacingY) *
+        densityFactor;
     final newY = _highestY - dy;
 
     final type = _pickType();
@@ -167,6 +174,32 @@ class GameWorld extends PositionComponent {
     platforms.add(p);
     add(p);
     _highestY = newY;
+
+    // Horizontal density boost (BR): roughly half the time, drop an extra
+    // platform on the *opposite* side of the viewport at a slightly
+    // offset Y so the player has lateral options instead of a vertical
+    // column. Skipped during the easy-warmup phase so first jumps stay
+    // predictable.
+    if (densityFactor < 0.85 &&
+        _spawnIndex > GameConfig.platformEasyCount &&
+        _rng.nextDouble() < 0.55) {
+      final mirrorMargin = w / 2 + movingPad;
+      final mirrorCenter = (centerX < viewportWidth / 2)
+          ? min(viewportWidth - mirrorMargin,
+              centerX + viewportWidth * 0.40 + _rng.nextDouble() * 60)
+          : max(mirrorMargin,
+              centerX - viewportWidth * 0.40 - _rng.nextDouble() * 60);
+      // Slight Y stagger so the extra platform isn't perfectly aligned
+      // with the main one — avoids visual repetition.
+      final mirrorY = newY + (_rng.nextDouble() - 0.5) * dy * 0.25;
+      final extra = Platform(
+        position: Vector2(mirrorCenter - w / 2, mirrorY),
+        width: w,
+        type: PlatformType.standard,
+      );
+      platforms.add(extra);
+      add(extra);
+    }
 
     _maybeSpawnPickupBetween(prev, p);
   }
