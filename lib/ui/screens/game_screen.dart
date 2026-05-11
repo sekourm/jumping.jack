@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 
 import '../../game/config.dart';
 import '../../game/jumping_jack_game.dart';
-import '../../services/audio_manager.dart';
 import '../../state/game_state.dart';
 import '../overlays/br_hud_overlay.dart';
 import '../overlays/br_result_overlay.dart';
@@ -39,7 +38,12 @@ class _GameScreenState extends State<GameScreen> {
 
   @override
   void dispose() {
-    AudioManager.stopMusic();
+    // Music is owned by the navigation layer: home_screen's `.then`
+    // callbacks switch to menu_loop after a pop, lobby_screen restarts
+    // it on entry, and JumpingJackGame.onLoad fades to the in-game
+    // track on re-entry. Calling stopMusic() here used to race with
+    // those crossfades and leave menu_loop stuck at a mid-fade volume
+    // (the "musique réduite" bug after a solo death).
     _gameState.dispose();
     super.dispose();
   }

@@ -150,7 +150,7 @@ class _BrHudOverlayState extends State<BrHudOverlay>
   }
 
   Future<void> _quit(BuildContext context) async {
-    AudioManager.click();
+    AudioManager.uiBack();
     await BattleRoyaleService.instance.leaveMatch();
     BattleRoyaleService.resetInstance();
     if (!context.mounted) return;

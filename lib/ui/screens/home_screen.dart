@@ -18,7 +18,7 @@ import 'game_screen.dart';
 import 'lobby_screen.dart';
 
 /// Bumped manually before each push so we can verify the deploy is live.
-const String kAppVersion = 'v1.0';
+const String kAppVersion = 'v3.0';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -195,8 +195,11 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _startGame() {
-    AudioManager.click();
-    AudioManager.startGameMusic();
+    AudioManager.uiConfirm();
+    // The game itself swaps to the right track in JumpingJackGame.onLoad
+    // (solo_loop vs br_loop) — calling startGameMusic() here would force
+    // solo_loop even for BR. Skip the music switch; the cross-fade lives
+    // in the engine boot path.
     Navigator.of(context).push(
       PageRouteBuilder<void>(
         pageBuilder: (_, a, b) => const GameScreen(),
@@ -229,14 +232,26 @@ class _HomeScreenState extends State<HomeScreen>
     }
     Navigator.of(context).push(
       PageRouteBuilder<void>(
-        pageBuilder: (_, a, b) => const LobbyScreen(),
+        // Quick-join everywhere — replaces the previous full lobby
+        // (player list, big countdown card, etc.). The minimal
+        // "Recherche d'une partie..." spinner has the same join logic
+        // underneath but reads as a much cleaner matchmaking step.
+        // The old full UI is still in LobbyScreen behind
+        // `quickJoin: false` if we ever want to bring it back.
+        pageBuilder: (_, a, b) => const LobbyScreen(quickJoin: true),
         transitionDuration: const Duration(milliseconds: 200),
         reverseTransitionDuration: const Duration(milliseconds: 200),
         transitionsBuilder: (_, animation, b, child) =>
             FadeTransition(opacity: animation, child: child),
       ),
     ).then((_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      // Restart menu music after we've come back from the BR flow.
+      // GameScreen.dispose stopped the in-game track during popUntil,
+      // and this fires *after* every dispose down the stack — no race
+      // with the music engine that the death-overlay path used to hit.
+      AudioManager.playMenuMusic();
+      setState(() {});
     });
   }
 

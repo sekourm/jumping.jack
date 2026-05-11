@@ -40,6 +40,19 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     this.isBattleRoyale = false,
   });
 
+  /// Don't auto-pause the Flame engine when the tab goes to background.
+  ///
+  /// Default Flame behaviour is to pause on `AppLifecycleState.hidden`,
+  /// which feels broken in a BR context (other clients keep playing
+  /// while ours sits frozen — when the tab comes back the user is
+  /// suddenly way out of sync). The browser will still throttle
+  /// requestAnimationFrame on hidden tabs (~1 Hz) so we can't keep the
+  /// game running smoothly off-screen, but at least Flame won't add an
+  /// explicit pause on top → when the tab regains focus the engine
+  /// resumes at full rate from the most recent broadcast state.
+  @override
+  bool get pauseWhenBackgrounded => false;
+
   final GameState gameState;
   final bool isBattleRoyale;
   int _lastBroadcastScore = -1;
@@ -154,6 +167,24 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
   // up lower than where they launched from.
   double _jumpStartY = 0;
 
+  // ---- Audio bookkeeping ----
+  // `int.ceil()` of the pre-game countdown last frame. We fire the beep
+  // SFX (3 / 2 / 1 / GO) only on transitions to keep the count clean.
+  int _lastCountdownNumber = -1;
+  // True once we've fired the charge_max sparkle for the current charge —
+  // resets when charging ends so the next hold re-triggers it.
+  bool _chargeMaxFired = false;
+  // Highest combo step we've already played a tick for this combo run.
+  // Resets when the combo timer expires.
+  int _lastComboTickStep = 0;
+  // Best score crossed during this run — used to fire score_milestone
+  // exactly once per threshold.
+  int _lastMilestoneIndex = -1;
+  static const _milestoneThresholds = <int>[1000, 5000, 10000, 25000, 50000];
+  // Tracks the BR safe-window edge so we can play the alarm exactly once
+  // when invincibility expires.
+  bool _wasInvincible = false;
+
   @override
   Color backgroundColor() => GameConfig.bgColor;
 
@@ -192,9 +223,15 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     gameWorld.add(ChargeAimArrow(player: player, gameState: gameState));
     gameWorld.add(BouncyChainTrail(player: player, gameState: gameState));
 
-    // Audio: preload SFX and start the in-game music loop.
+    // Audio: preload SFX and start the in-game music loop. BR gets its
+    // own track (darker, faster) so the player reads the mode from the
+    // first beat without needing the HUD.
     await AudioManager.preload();
-    AudioManager.startGameMusic();
+    if (isBattleRoyale) {
+      AudioManager.playBrMusic();
+    } else {
+      AudioManager.playSoloMusic();
+    }
 
     await _reset();
 
@@ -385,7 +422,11 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
 
   Future<void> restart() async {
     await _reset();
-    AudioManager.startGameMusic();
+    if (isBattleRoyale) {
+      AudioManager.playBrMusic();
+    } else {
+      AudioManager.playSoloMusic();
+    }
   }
 
   Future<void> _reset() async {
@@ -425,6 +466,15 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     _bouncyChainCount = 0;
     _jumpStartY = player.position.y;
     _resetCharging();
+    // Reset audio bookkeeping so the new run starts on a clean slate.
+    _lastCountdownNumber = -1;
+    _chargeMaxFired = false;
+    _lastComboTickStep = 0;
+    _lastMilestoneIndex = -1;
+    _wasInvincible = isBattleRoyale;
+    AudioManager.stopChargeLoop();
+    AudioManager.dangerLoop(0);
+    AudioManager.slowTimeLoop(false);
 
     // 3 s "PRÊT?" countdown for both modes. In solo it lets the player
     // settle after the tutorial dismisses; in BR it syncs the start.
@@ -455,6 +505,17 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     if (_startCountdown > 0) {
       _startCountdown -= dt;
       if (_startCountdown < 0) _startCountdown = 0;
+      // Beep on every whole-second tick (3, 2, 1) and "GO" once the
+      // countdown crosses below 0.5 s — same trigger the HUD uses to
+      // swap "1" → "GO" so audio + visual line up.
+      final n = _startCountdown.ceil();
+      if (_startCountdown <= 0.5 && _lastCountdownNumber != 0) {
+        AudioManager.countdownGo();
+        _lastCountdownNumber = 0;
+      } else if (n > 0 && n != _lastCountdownNumber) {
+        AudioManager.countdown321();
+        _lastCountdownNumber = n;
+      }
       _applyCameraToWorld();
       return;
     }
@@ -504,6 +565,18 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       gameState.updateCharge(charging: true, progress: _chargeProgress);
       player.applyChargingState(_chargeProgress);
       _updatePreview();
+      // Audio: rising-pitch charge hum + a one-shot sparkle the first
+      // time we cross 85 % per hold (matches the "boiling over" visual
+      // on the cube).
+      AudioManager.chargeLoop(_chargeProgress);
+      if (_chargeProgress > 0.85 && !_chargeMaxFired) {
+        AudioManager.chargeMax();
+        _chargeMaxFired = true;
+      }
+    } else {
+      // Idempotent: AudioManager checks its own state, no-op once stopped.
+      AudioManager.stopChargeLoop();
+      _chargeMaxFired = false;
     }
 
     // Carry the player along moving platforms before physics this frame.
@@ -567,13 +640,45 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
         player.launch(velocity);
         gameState.onJumpStart();
         _onBounced(landingSpeed);
-        AudioManager.bouncy();
+        AudioManager.bouncyBoing();
+        // Bouncy-chain audio escalation — second hit upward, third even
+        // higher. Matches the chain bonus in score.
+        if (_bouncyChainCount >= 2) {
+          AudioManager.bouncyChain(_bouncyChainCount);
+        }
       } else {
         gameState.onJumpLanded();
         GameProgress.update(gameState.platformsReached);
         _onLanded(landingSpeed);
         _autoCollectPickupsOnPlatform(landedOn);
-        AudioManager.land();
+        // Pick soft vs hard impact based on the incoming vertical
+        // velocity (max ≈ maxJumpPower). 600 px/s ≈ half of max →
+        // anything heavier reads as a thud rather than a tap.
+        if (landingSpeed > 600) {
+          AudioManager.landHard();
+        } else {
+          AudioManager.landSoft();
+        }
+        // Combo tick — escalation by step (×2 = C, ×3 = E, ×4 = G,
+        // ×5+ = B + the rich x5 stinger). Only fire on increases so
+        // re-landing on a non-chain doesn't double-tick.
+        final step = gameState.comboCount;
+        if (step >= 2 && step > _lastComboTickStep) {
+          AudioManager.comboTick(step);
+          if (step == 5) AudioManager.comboX5Plus();
+          _lastComboTickStep = step;
+        }
+        // Score milestones — fire once per threshold crossed.
+        for (var i = _lastMilestoneIndex + 1;
+            i < _milestoneThresholds.length;
+            i++) {
+          if (gameState.score >= _milestoneThresholds[i]) {
+            AudioManager.scoreMilestone();
+            _lastMilestoneIndex = i;
+          } else {
+            break;
+          }
+        }
         // Chain ends on a non-bouncy landing.
         if (_bouncyChainCount != 0) {
           _bouncyChainCount = 0;
@@ -595,9 +700,23 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     _checkBotDeaths();
     _checkBotPickupCollision();
     _checkAllCrushes(dt);
+    final prevCombo = gameState.comboCount;
     if (_checkDeath()) return;
 
     gameState.tick(dt);
+
+    // After tick: combo timer may have expired → broken-combo SFX. Only
+    // fire when it was actually a meaningful streak (≥ 3) so a quick
+    // ×2 timeout doesn't beep negatively.
+    if (prevCombo >= 3 && gameState.comboCount == 0) {
+      AudioManager.comboBreak();
+      _lastComboTickStep = 0;
+    } else if (gameState.comboCount == 0) {
+      _lastComboTickStep = 0;
+    }
+
+    // Drive ambient loops once per frame from the canonical game state.
+    _updateAmbientAudio();
 
     // Broadcast my score to Battle Royale teammates whenever it changes.
     if (isBattleRoyale && gameState.score != _lastBroadcastScore) {
@@ -700,6 +819,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
         life: 1.6,
         floatHeight: 95,
       ));
+      AudioManager.comebackReward();
     }
 
     // Wall-bounce reward — landing successfully after kissing a wall pays
@@ -722,6 +842,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
         life: 1.5,
         floatHeight: 80,
       ));
+      AudioManager.wallRebondReward();
       _wallBouncesThisJump = 0;
     }
   }
@@ -839,6 +960,33 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     // proportions, just with different black bars depending on aspect.
     gameWorld.position = Vector2(baseX, baseY);
     gameWorld.scale = Vector2.all(_worldScale);
+  }
+
+  /// Pipes the canonical per-frame state into the long-lived ambient
+  /// audio loops. Each call is cheap and idempotent — the AudioManager
+  /// only resumes / pauses on transitions, and re-sets the volume in
+  /// place otherwise.
+  void _updateAmbientAudio() {
+    // Heartbeat scales with the danger level (0 below the comfort line,
+    // ramps up to 1 at the screen bottom). Soft floor at 0.5 so it only
+    // kicks in when the situation is actually tense.
+    final danger = gameState.dangerLevel;
+    final hbIntensity =
+        danger > 0.5 ? ((danger - 0.5) / 0.5).clamp(0.0, 1.0) : 0.0;
+    AudioManager.dangerLoop(hbIntensity.toDouble());
+
+    // Slow-time underwater drone — only audible while the pickup effect
+    // is live. `slowFactor` is 1.0 normally, < 1.0 while slowed.
+    AudioManager.slowTimeLoop(gameState.slowFactor < 0.99);
+
+    // BR safe-zone (invincibility) ending — one-shot alarm on the edge.
+    if (isBattleRoyale) {
+      final now = brInvincibilityActive;
+      if (_wasInvincible && !now) {
+        AudioManager.safeZoneEnd();
+      }
+      _wasInvincible = now;
+    }
   }
 
   void _updateDangerLevel() {
@@ -1121,19 +1269,28 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     for (final bot in _bots.values) {
       if (!bot.alive) continue;
       final botHeadY = bot.position.y - bot.size.y;
+      final botMidY = bot.position.y - bot.size.y * 0.5;
       final botHalfW = bot.size.x / 2;
       final overlapsX = right > bot.position.x - botHalfW &&
           left < bot.position.x + botHalfW;
-      final crossedTop = prevFeetY <= botHeadY + 4 && feetY >= botHeadY - 4;
-      if (!overlapsX || !crossedTop) continue;
+      if (!overlapsX) continue;
+      // Mirrors _checkBotsCrushPlayer: a strict "feet crossed the head
+      // this frame" rule, OR a lenient "feet are inside the body
+      // region" range. The fallback catches fast-descending arcs where
+      // the player's feet skip past the head line in one tick.
+      final crossedTop =
+          prevFeetY <= botHeadY + 4 && feetY >= botHeadY - 4;
+      final inStompRange =
+          feetY >= botHeadY - bot.size.y && feetY <= botMidY;
+      if (!crossedTop && !inStompRange) continue;
 
       bot.markDeadLocal();
       BattleRoyaleService.instance.broadcastCrushKill(
         bot.playerId,
         killerId: Preferences.playerId,
       );
-      AudioManager.brDeath();
-      AudioManager.bouncy();
+      AudioManager.killConfirmed();
+      AudioManager.bouncyBoing();
 
       final velocity = _computeAutoLaunchVelocity(player.position.y);
       player.launch(velocity);
@@ -1159,12 +1316,25 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
   }
 
   /// A descending bot/remote landing on the local player's head.
+  ///
+  /// Uses two complementary detectors so a wide range of arc patterns
+  /// register the crush:
+  ///   • The classic Mario rule — strict "feet crossed head Y this
+  ///     frame" — fires for smooth descents.
+  ///   • A range-based fallback fires when the bot's feet land within
+  ///     the player's body area on the current frame, catching the
+  ///     discrete-arc steps that skip over the head crossing entirely.
+  ///
+  /// Without the second branch, players reported "très difficile de se
+  /// tuer" because bot arcs frequently jump from `feet above head` to
+  /// `feet past mid-body` in one tick, bypassing the strict crossing.
   void _checkBotsCrushPlayer() {
     if (gameState.status != GameStatus.playing) return;
     if (BattleRoyaleService.instance.myDead) return;
 
     // Local player head Y (anchor is bottomCenter, height = size.y).
     final headY = player.position.y - player.size.y;
+    final midY = player.position.y - player.size.y * 0.5;
     final halfW = player.size.x / 2;
     final left = player.position.x - halfW;
     final right = player.position.x + halfW;
@@ -1178,10 +1348,16 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       final botHalfW = bot.size.x / 2;
       final overlapsX = right > bot.position.x - botHalfW &&
           left < bot.position.x + botHalfW;
+      if (!overlapsX) continue;
       final crossedHead = prevFeet <= headY + 4 && feetY >= headY - 4;
-      if (!overlapsX || !crossedHead) continue;
-      // We just got squashed — note the killer so the feed says
-      // "BOT_X t'a écrasé".
+      // Lenient fallback: bot's feet are inside the player's body
+      // region (between just above the head and the body mid-line).
+      // The window is intentionally bounded by one body height above
+      // the head so we don't false-positive a bot mid-arc several
+      // platforms up.
+      final inStompRange =
+          feetY >= headY - player.size.y && feetY <= midY;
+      if (!crossedHead && !inStompRange) continue;
       _crushedByPlayerId = bot.playerId;
       _handleDeath(DeathReason.crushed);
       return;
@@ -1192,19 +1368,28 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
   /// the kill in the BR feed. Reset on each new run.
   String? _crushedByPlayerId;
 
-  /// Bot vs bot — leader-authoritative.
+  /// Bot vs bot — leader-authoritative. Uses the same dual-signal
+  /// detection as the player-involved variants (_checkPlayerCrushBots
+  /// and _checkBotsCrushPlayer):
+  ///   • Strict Mario rule — the crusher's feet crossed the victim's
+  ///     head Y this very frame (`prevFeet <= headY+4 && feetY >=
+  ///     headY-4`).
+  ///   • OR a lenient range — the crusher's feet sit within the
+  ///     victim's body region (from one body height above the head
+  ///     down to the body mid-line). The upper cap keeps the apex of
+  ///     a high arc from false-positive crushing a cube several
+  ///     platforms below.
   ///
-  /// Lenient detection: any time two cubes overlap horizontally AND one
-  /// sits *clearly* above the other (its feet are above the lower cube's
-  /// body mid-line), the upper one crushes the lower one. We don't
-  /// strictly require a descending arc cross — bots are scripted with
-  /// discrete arcs that can skip over a "head crossing" frame, so the
-  /// strict Mario rule under-fires for them.
+  /// Plus the crusher must be descending — coming down on the victim,
+  /// not floating up through them — and the two cubes' X boxes must
+  /// overlap.
   void _checkBotsCrushBots() {
     final list = _bots.values.where((b) => b.alive).toList(growable: false);
     if (list.length < 2) return;
     for (final crusher in list) {
+      if (!crusher.descending) continue;
       final cFeet = crusher.position.y;
+      final cPrevFeet = crusher.prevY;
       final cHalfW = crusher.size.x / 2;
       for (final victim in list) {
         if (identical(crusher, victim)) continue;
@@ -1214,12 +1399,14 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
             crusher.position.x + cHalfW > victim.position.x - vHalfW &&
                 crusher.position.x - cHalfW < victim.position.x + vHalfW;
         if (!overlapsX) continue;
-        // Crusher must be visibly above the victim — its feet at or
-        // above the victim's body mid-line. Tolerance keeps "side-by-
-        // side on the same platform" from falsely registering as a
-        // crush. World Y grows downward, so smaller Y = higher.
-        final vMidY = victim.position.y - victim.size.y * 0.5;
-        if (cFeet > vMidY) continue;
+        // World Y grows downward, so smaller Y = higher.
+        final victimHeadY = victim.position.y - victim.size.y;
+        final victimMidY = victim.position.y - victim.size.y * 0.5;
+        final crossedHead =
+            cPrevFeet <= victimHeadY + 4 && cFeet >= victimHeadY - 4;
+        final inStompRange =
+            cFeet >= victimHeadY - victim.size.y && cFeet <= victimMidY;
+        if (!crossedHead && !inStompRange) continue;
         victim.markDeadLocal();
         BattleRoyaleService.instance.broadcastCrushKill(
           victim.playerId,
@@ -1243,6 +1430,14 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     _brWinSequenceTriggered = true;
     _brWinnerId = winner;
     _brWinSequenceTimer = brWinSequenceDuration;
+    // Big match-end stinger: triumphant fanfare for the winner, soft
+    // descending tone for everyone else. Both duck the music heavily
+    // so the moment really lands.
+    if (winner == Preferences.playerId) {
+      AudioManager.victoryWin();
+    } else {
+      AudioManager.defeatPlacement();
+    }
   }
 
   void _tickWinSequence(double dt) {
@@ -1353,19 +1548,30 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       _bouncyChainCount = 0;
       gameState.updateBouncyChain(0);
     }
+    // Cut all ambient loops so nothing keeps humming behind the death
+    // overlay / spectator view.
+    AudioManager.stopChargeLoop();
+    AudioManager.dangerLoop(0);
+    AudioManager.slowTimeLoop(false);
+    final isNewBest =
+        Preferences.updateBestScore(gameState.score);
     gameState.die(reason);
-    if (Preferences.updateBestScore(gameState.score)) {
-      gameState.markNewBest();
-    }
+    if (isNewBest) gameState.markNewBest();
     if (isBattleRoyale) {
       BattleRoyaleService.instance.updateMyScore(gameState.score);
       BattleRoyaleService.instance
           .reportMyDeath(killerId: _crushedByPlayerId);
       _crushedByPlayerId = null;
-      AudioManager.brDeath();
       // BR: keep the music going so the spectator view stays alive.
+      if (reason == DeathReason.crushed) {
+        AudioManager.gotCrushed();
+      }
     } else {
+      // Solo: only the gameover jingle plays — no short death SFX, no
+      // squish. The new-best stinger layers on top if the player just
+      // set a record.
       AudioManager.playGameOverJingle();
+      if (isNewBest) AudioManager.newBestScore();
     }
   }
 
@@ -1449,7 +1655,8 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     player.launch(velocity);
     gameState.onJumpStart();
     _resetCharging();
-    AudioManager.jump();
+    AudioManager.stopChargeLoop();
+    AudioManager.jumpRelease();
     if (!isBattleRoyale) {
       AudioManager.platformExplode();
     }

@@ -132,7 +132,7 @@ class BattleRoyaleService extends ChangeNotifier {
   }
 
   static const int maxPlayers = 5;
-  static const Duration countdownDuration = Duration(seconds: 5);
+  static const Duration countdownDuration = Duration(seconds: 3);
   static const Duration scoreBroadcastInterval = Duration(milliseconds: 250);
   static const Duration heartbeatInterval = Duration(seconds: 5);
   // Stale-broadcast watchdog: when a player's source client stops sending
@@ -192,6 +192,12 @@ class BattleRoyaleService extends ChangeNotifier {
   bool _myWinRecorded = false;
 
   bool _disposed = false;
+
+  /// When true, the lobby countdown ticks (5-4-3-2-1) are suppressed.
+  /// Set by [LobbyScreen] in quick-join mode (post-BR replay) so the
+  /// player isn't subjected to the metronome on a fast re-queue. Reset
+  /// to false naturally on the next service instance creation.
+  bool silentCountdown = false;
 
   // ---- Public getters ----
   BrPhase get phase => _phase;
@@ -324,6 +330,7 @@ class BattleRoyaleService extends ChangeNotifier {
     _currentLeaderId = topId;
     final p = _playerById(topId);
     if (p == null) return;
+    AudioManager.leaderChanged();
     _pushEvent(BrEvent(
       type: BrEventType.lead,
       at: DateTime.now(),
@@ -745,6 +752,17 @@ class BattleRoyaleService extends ChangeNotifier {
         }
       }
 
+      // Snapshot the previous human ids so we can ping the join/leave
+      // SFX on lobby churn — only while the room is still in the waiting
+      // phase, otherwise late roster updates during a match would chirp
+      // each frame.
+      final prevHumanIds = _phase == BrPhase.waiting
+          ? _players
+              .where((p) => !p.isBot)
+              .map((p) => p.playerId)
+              .toSet()
+          : null;
+
       _players = raw
           .map((r) {
             final pid = r['player_id'] as String;
@@ -758,6 +776,22 @@ class BattleRoyaleService extends ChangeNotifier {
             );
           })
           .toList(growable: false);
+
+      if (prevHumanIds != null) {
+        final me = Preferences.playerId;
+        final nowHumanIds = _players
+            .where((p) => !p.isBot)
+            .map((p) => p.playerId)
+            .toSet();
+        // Skip our own slot — that "join" happens during the join RPC,
+        // not via the realtime broadcast.
+        for (final pid in nowHumanIds.difference(prevHumanIds)) {
+          if (pid != me) AudioManager.lobbyPlayerJoin();
+        }
+        for (final pid in prevHumanIds.difference(nowHumanIds)) {
+          if (pid != me) AudioManager.lobbyPlayerLeave();
+        }
+      }
 
       // Backfill alive state for any player that joined after we entered
       // the playing phase (typically the bots inserted by the leader after
@@ -837,8 +871,18 @@ class BattleRoyaleService extends ChangeNotifier {
       _startMatch();
       return;
     }
+    var lastSecond = _countdownRemaining.inSeconds;
     _countdownTimer = Timer.periodic(const Duration(milliseconds: 100), (t) {
       _countdownRemaining -= const Duration(milliseconds: 100);
+      // Click metronomically on each whole-second crossing — gives the
+      // lobby a real "we're about to launch" rhythm. Suppressed when
+      // the screen is in quick-join mode (BR replay) so the player
+      // doesn't get the 5-4-3-2-1 chirp twice in a row.
+      final s = _countdownRemaining.inSeconds;
+      if (s != lastSecond && s >= 0) {
+        if (!silentCountdown) AudioManager.lobbyCountdownTick();
+        lastSecond = s;
+      }
       if (_countdownRemaining.inMilliseconds <= 0) {
         t.cancel();
         _startMatch();
@@ -1013,6 +1057,11 @@ class BattleRoyaleService extends ChangeNotifier {
       _broadcastDeath({'pid': botId});
       _reportDeathToServer(victimId: botId);
     }
+    // Audio cue — Supabase Realtime doesn't echo a broadcast back to
+    // its sender, so the leader never received its own bot-death
+    // broadcast and silently missed every bot fall. Fire the local
+    // "opponent died" bell here so leader + non-leaders alike hear it.
+    AudioManager.opponentDied();
     // Push the BR feed event locally too — the leader is the one running
     // the death detection here, and its own echo of the broadcast hits
     // the alive-check early-return before any event is recorded.
@@ -1168,9 +1217,9 @@ class BattleRoyaleService extends ChangeNotifier {
     state.survivalTime = _matchStartedAt == null
         ? null
         : DateTime.now().difference(_matchStartedAt!);
-    // Audio cue: a thud whenever any non-local player dies, so the action
-    // stays readable even off-screen.
-    AudioManager.brDeath();
+    // Audio cue: a soft distant bell whenever any non-local player dies,
+    // so the action stays readable even off-screen.
+    AudioManager.opponentDied();
     // Push the BR event for the kill feed.
     final victim = _playerById(pid);
     final killerId = payload['by'] as String?;

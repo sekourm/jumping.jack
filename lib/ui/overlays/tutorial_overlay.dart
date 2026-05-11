@@ -68,7 +68,7 @@ class _TutorialOverlayState extends State<TutorialOverlay>
   }
 
   void _ready() {
-    AudioManager.click();
+    AudioManager.uiConfirm();
     // Tapping "JE SUIS PRÊT" implicitly dismisses the tutorial for good —
     // no opt-in checkbox. Players who want the tutorial back can re-enable
     // it from settings (or by reinstalling).

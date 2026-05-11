@@ -12,8 +12,17 @@ import 'game_screen.dart';
 
 /// Battle Royale matchmaking lobby. Owns a [BattleRoyaleService] for its
 /// lifetime — joining the match on push, leaving on pop.
+///
+/// [quickJoin] mode (used by the BR result overlay's "Rejouer" button)
+/// hides the full matchmaking UI and shows a minimal "Recherche d'une
+/// partie..." spinner. The underlying join/wait/transition logic is
+/// identical — only the visuals differ. As soon as `phase == playing`
+/// the screen is replaced by the GameScreen exactly like the normal
+/// lobby.
 class LobbyScreen extends StatefulWidget {
-  const LobbyScreen({super.key});
+  const LobbyScreen({super.key, this.quickJoin = false});
+
+  final bool quickJoin;
 
   @override
   State<LobbyScreen> createState() => _LobbyScreenState();
@@ -26,7 +35,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
   @override
   void initState() {
     super.initState();
+    // Keep the menu music running through matchmaking — the BR theme
+    // only kicks in once the actual game loads (JumpingJackGame.onLoad
+    // calls playBrMusic). If we just landed here from the home screen
+    // it's already playing and this is a no-op; if we got here from
+    // any other path (e.g. retry after a previous game) it restarts.
+    AudioManager.playMenuMusic();
     _service = BattleRoyaleService.instance;
+    // Quick-join mode (post-BR replay) silences the 5-4-3-2-1 lobby
+    // ticks — the player already heard them once, no need to double up.
+    _service.silentCountdown = widget.quickJoin;
     _service.addListener(_onChanged);
     _service.joinMatch();
   }
@@ -69,6 +87,90 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.quickJoin) return _buildQuickJoin();
+    return _buildFullLobby();
+  }
+
+  /// Minimal "Recherche d'une partie..." UI used after a BR replay.
+  /// No player list, no countdown — just a spinner and a cancel button.
+  /// The service still runs the normal join/wait flow underneath and
+  /// the GameScreen takes over as soon as `phase == playing`.
+  Widget _buildQuickJoin() {
+    final phase = _service.phase;
+    return Scaffold(
+      backgroundColor: JackDesign.bg,
+      body: Stack(
+        children: [
+          Positioned.fill(child: CosmicBackground(stage: JackStage.battle)),
+          SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const JackBrLogo(fontSize: 32),
+                    const SizedBox(height: 32),
+                    const SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 4,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(JackDesign.purpleHi),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      _quickJoinStatusLabel(phase),
+                      textAlign: TextAlign.center,
+                      style: JackDesign.manrope(
+                        fontSize: 14,
+                        weight: FontWeight.w800,
+                        color: Colors.white,
+                        letterSpacing: 2.5,
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+                    FortniteButton(
+                      label: I18n.t.leaveLobby,
+                      icoName: IcoName.close,
+                      style: FortniteButtonStyle.cyan,
+                      onPressed: _cancel,
+                      enabled: phase == BrPhase.joining ||
+                          (phase == BrPhase.waiting &&
+                              _service.countdownRemaining.inMilliseconds >
+                                  3000),
+                      height: 52,
+                      fontSize: 14,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _quickJoinStatusLabel(BrPhase phase) {
+    switch (phase) {
+      case BrPhase.joining:
+      case BrPhase.waiting:
+      case BrPhase.ended:
+        return 'RECHERCHE D\'UNE PARTIE…';
+      case BrPhase.starting:
+      case BrPhase.playing:
+        return 'DÉMARRAGE…';
+      case BrPhase.finished:
+        return 'FIN DE PARTIE';
+      case BrPhase.error:
+        return 'ERREUR';
+    }
+  }
+
+  Widget _buildFullLobby() {
     return Scaffold(
       backgroundColor: JackDesign.bg,
       body: Stack(

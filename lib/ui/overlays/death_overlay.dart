@@ -137,8 +137,12 @@ class _DeathContentState extends State<_DeathContent>
                     height: 56,
                     fontSize: 14,
                     onPressed: () {
-                      AudioManager.click();
-                      AudioManager.startMenuMusic();
+                      AudioManager.uiBack();
+                      // Menu music restart is handled by home_screen's
+                      // `.then` callback once GameScreen has actually
+                      // been disposed. Calling playMenuMusic() here
+                      // would race with GameScreen.dispose -> stopMusic
+                      // and leave menu_loop frozen at a mid-fade volume.
                       Navigator.of(context).pop();
                     },
                   ),
@@ -152,8 +156,8 @@ class _DeathContentState extends State<_DeathContent>
                     height: 56,
                     fontSize: 14,
                     onPressed: () {
-                      AudioManager.click();
-                      AudioManager.startGameMusic();
+                      AudioManager.uiConfirm();
+                      // Game.restart() handles the music switch internally.
                       game.restart();
                     },
                   ),

@@ -160,6 +160,11 @@ class _BrResultOverlayState extends State<BrResultOverlay> {
     await BattleRoyaleService.instance.leaveMatch();
     BattleRoyaleService.resetInstance();
     if (!context.mounted) return;
+    // Restore the menu track before the popUntil — `home_screen`'s
+    // `_openBattleRoyale.then` already fired at lobby→game replacement
+    // (Navigator.pushReplacement completes the previous route's Future
+    // immediately), so it can't be relied on to switch the music back.
+    AudioManager.playMenuMusic();
     Navigator.of(context).popUntil((r) => r.isFirst);
   }
 
@@ -171,9 +176,13 @@ class _BrResultOverlayState extends State<BrResultOverlay> {
     if (!context.mounted) return;
     final navigator = Navigator.of(context);
     navigator.popUntil((r) => r.isFirst);
+    // `quickJoin: true` hides the full matchmaking UI — the player sees
+    // a minimal "Recherche d'une partie…" spinner while the service
+    // runs the normal join flow, and the GameScreen takes over as
+    // soon as the room reaches the `playing` phase.
     navigator.push(
       PageRouteBuilder<void>(
-        pageBuilder: (_, a, b) => const LobbyScreen(),
+        pageBuilder: (_, a, b) => const LobbyScreen(quickJoin: true),
         transitionDuration: const Duration(milliseconds: 200),
         reverseTransitionDuration: const Duration(milliseconds: 200),
         transitionsBuilder: (_, animation, b, child) =>
