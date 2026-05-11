@@ -75,8 +75,7 @@ class _BrResultOverlayState extends State<BrResultOverlay> {
       builder: (context) {
         final showDeathChoice =
             svc.myDead && !svc.spectator && svc.phase == BrPhase.playing;
-        final showFinal =
-            svc.phase == BrPhase.finished && _celebrationDone;
+        final showFinal = svc.phase == BrPhase.finished && _celebrationDone;
         // Celebration window: phase has flipped to finished but we're still
         // in the 3 s zoom-on-the-winner sequence. Don't draw the dimmed
         // backdrop or leaderboard — just float a big VICTOIRE / DÉFAITE
@@ -92,9 +91,7 @@ class _BrResultOverlayState extends State<BrResultOverlay> {
           // leaderboard once the camera zoom finishes, no "TU ES TOMBÉ"
           // banner clogging the screen.
           if (!iWon) return const SizedBox.shrink();
-          return const IgnorePointer(
-            child: _VictoryBanner(),
-          );
+          return const IgnorePointer(child: _VictoryBanner());
         }
         return Stack(
           children: [
@@ -119,8 +116,7 @@ class _BrResultOverlayState extends State<BrResultOverlay> {
                             vertical: 24,
                           ),
                           child: ConstrainedBox(
-                            constraints:
-                                const BoxConstraints(maxWidth: 380),
+                            constraints: const BoxConstraints(maxWidth: 380),
                             child: showFinal
                                 ? _FinalResult(
                                     svc: svc,
@@ -356,8 +352,10 @@ class _FinalResultState extends State<_FinalResult>
     return AnimatedBuilder(
       animation: _ctrl,
       builder: (context, _) {
-        final raw = ((_ctrl.value - startAt) / (endAt - startAt))
-            .clamp(0.0, 1.0);
+        final raw = ((_ctrl.value - startAt) / (endAt - startAt)).clamp(
+          0.0,
+          1.0,
+        );
         final eased = Curves.easeOutCubic.transform(raw);
         return Opacity(
           opacity: eased,
@@ -393,7 +391,6 @@ class _FinalResultState extends State<_FinalResult>
           _stagger(
             _WinnerPortrait(
               name: winner.player.name,
-              score: winner.score,
               iWon: iWon,
               color: slotColor(winner.player.slotIndex),
               // We only know the BR wins count for the local player —
@@ -405,11 +402,7 @@ class _FinalResultState extends State<_FinalResult>
           ),
         ],
         const SizedBox(height: 22),
-        _stagger(
-          _RankingCard(board: board, myId: myId),
-          0.30,
-          0.70,
-        ),
+        _stagger(_RankingCard(board: board, myId: myId), 0.30, 0.70),
         const SizedBox(height: 26),
         _stagger(
           ConstrainedBox(
@@ -454,15 +447,14 @@ class _FinalResultState extends State<_FinalResult>
 class _WinnerPortrait extends StatelessWidget {
   const _WinnerPortrait({
     required this.name,
-    required this.score,
     required this.iWon,
     required this.color,
     required this.brWins,
   });
   final String name;
-  final int score;
   final bool iWon;
   final Color color;
+
   /// Lifetime BR wins for the winner (only known for the local player).
   /// 0 hides the badge.
   final int brWins;
@@ -489,7 +481,7 @@ class _WinnerPortrait extends StatelessWidget {
                 height: 28,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: JackDesign.btnPrimary,
+                  color: const Color(0xFFFFD700),
                   border: Border.all(color: JackDesign.brown, width: 2),
                 ),
                 alignment: Alignment.center,
@@ -497,7 +489,7 @@ class _WinnerPortrait extends StatelessWidget {
                   '1',
                   style: JackDesign.bungee(
                     fontSize: 13,
-                    color: JackDesign.brownInk,
+                    color: const Color(0xFF1A1A1A),
                   ),
                 ),
               ),
@@ -511,11 +503,10 @@ class _WinnerPortrait extends StatelessWidget {
           children: [
             Text(
               I18n.t.winnerLabel,
-              style: JackDesign.manrope(
-                fontSize: 9,
-                weight: FontWeight.w800,
-                color: Colors.white.withValues(alpha: 0.50),
-                letterSpacing: 2.0,
+              style: JackDesign.bungee(
+                fontSize: 32,
+                color: const Color(0xFFFFD700),
+                letterSpacing: 1.2,
               ),
             ),
             const SizedBox(height: 4),
@@ -538,15 +529,6 @@ class _WinnerPortrait extends StatelessWidget {
                   _BrWinsBadge(count: brWins),
                 ],
               ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '$score',
-              style: JackDesign.bungee(
-                fontSize: 24,
-                color: JackDesign.yellow,
-                feature: const FontFeature.tabularFigures(),
-              ),
             ),
           ],
         ),
@@ -596,14 +578,17 @@ class _BrWinsBadge extends StatelessWidget {
 
 class _RankingCard extends StatelessWidget {
   const _RankingCard({required this.board, required this.myId});
-  final List<({
-    BrPlayer player,
-    int score,
-    bool alive,
-    int? placement,
-    int kills,
-    Duration? survivalTime,
-  })> board;
+  final List<
+    ({
+      BrPlayer player,
+      int score,
+      bool alive,
+      int? placement,
+      int kills,
+      Duration? survivalTime,
+    })
+  >
+  board;
   final String myId;
 
   @override
@@ -656,11 +641,7 @@ class _RankingCard extends StatelessWidget {
 }
 
 class _LbRow extends StatelessWidget {
-  const _LbRow({
-    required this.rank,
-    required this.entry,
-    required this.isMe,
-  });
+  const _LbRow({required this.rank, required this.entry, required this.isMe});
   final int rank;
   final ({
     BrPlayer player,
@@ -669,7 +650,8 @@ class _LbRow extends StatelessWidget {
     int? placement,
     int kills,
     Duration? survivalTime,
-  }) entry;
+  })
+  entry;
   final bool isMe;
 
   String _formatTime(Duration? d) {
@@ -685,11 +667,11 @@ class _LbRow extends StatelessWidget {
   Color _rankColor() {
     switch (rank) {
       case 1:
-        return const Color(0xFFFFD24A);
+        return const Color(0xFFFFD700);
       case 2:
-        return const Color(0xFFC0C8D2);
+        return const Color(0xFFE6ECF5);
       case 3:
-        return const Color(0xFFC18A4F);
+        return const Color(0xFFFF9347);
       default:
         return const Color(0xFF7E889A);
     }
@@ -712,103 +694,76 @@ class _LbRow extends StatelessWidget {
           width: 1,
         ),
       ),
-      child: Opacity(
-        opacity: entry.alive ? 1.0 : 0.55,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                    color: rank <= 3
-                        ? rankColor
-                        : Colors.white.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    '$rank',
-                    style: JackDesign.bungee(
-                      fontSize: 11,
-                      color: rank <= 3
-                          ? const Color(0xFF1A1A1A)
-                          : Colors.white.withValues(alpha: 0.60),
-                    ),
-                  ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  color: rank <= 3
+                      ? rankColor
+                      : Colors.white.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(6),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    entry.player.name,
-                    style: JackDesign.bungee(
-                      fontSize: 12,
-                      color: Colors.white,
-                      letterSpacing: 0.6,
-                    ).copyWith(
-                      decoration: entry.alive
-                          ? TextDecoration.none
-                          : TextDecoration.lineThrough,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (isMe) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(5),
-                      border:
-                          Border.all(color: JackDesign.yellow, width: 1.5),
-                    ),
-                    child: Text(
-                      I18n.t.you,
-                      style: JackDesign.bungee(
-                        fontSize: 9,
-                        color: JackDesign.yellow,
-                        letterSpacing: 1.6,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(width: 10),
-                Text(
-                  '${entry.score}',
+                alignment: Alignment.center,
+                child: Text(
+                  '$rank',
                   style: JackDesign.bungee(
-                    fontSize: 14,
-                    color: Colors.white,
-                    feature: const FontFeature.tabularFigures(),
+                    fontSize: 11,
+                    color: rank <= 3
+                        ? const Color(0xFF1A1A1A)
+                        : Colors.white.withValues(alpha: 0.60),
                   ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  entry.player.name,
+                  style: JackDesign.bungee(
+                    fontSize: 12,
+                    color: rankColor,
+                    letterSpacing: 0.6,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                '${entry.score}',
+                style: JackDesign.bungee(
+                  fontSize: 14,
+                  color: rankColor,
+                  feature: const FontFeature.tabularFigures(),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          // Stat strip — kills, survival time. Uses small icons + chunky
+          // numbers for at-a-glance readability.
+          Padding(
+            padding: const EdgeInsets.only(left: 32),
+            child: Row(
+              children: [
+                _StatPill(
+                  icon: Icons.adjust,
+                  label: '${entry.kills}',
+                  color: rankColor,
+                ),
+                const SizedBox(width: 8),
+                _StatPill(
+                  icon: Icons.timer_outlined,
+                  label: _formatTime(entry.survivalTime),
+                  color: rankColor,
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            // Stat strip — kills, survival time. Uses small icons + chunky
-            // numbers for at-a-glance readability.
-            Padding(
-              padding: const EdgeInsets.only(left: 32),
-              child: Row(
-                children: [
-                  _StatPill(
-                    icon: Icons.adjust,
-                    label: '${entry.kills}',
-                    color: const Color(0xFFFF6E94),
-                  ),
-                  const SizedBox(width: 8),
-                  _StatPill(
-                    icon: Icons.timer_outlined,
-                    label: _formatTime(entry.survivalTime),
-                    color: JackDesign.cyan,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -841,13 +796,7 @@ class _StatPill extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (text != null)
-            Text(
-              text!,
-              style: JackDesign.bungee(
-                fontSize: 11,
-                color: color,
-              ),
-            )
+            Text(text!, style: JackDesign.bungee(fontSize: 11, color: color))
           else
             Icon(icon, color: color, size: 11),
           const SizedBox(width: 4),

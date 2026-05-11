@@ -344,7 +344,7 @@ class BattleRoyaleService extends ChangeNotifier {
   void notifyBrPickupCollected() {
     if (_brPickupCollected) return;
     _brPickupCollected = true;
-    _broadcast('pickup', const <String, dynamic>{});
+    _broadcast('pickup', <String, dynamic>{});
     _safeNotify();
   }
 
@@ -1302,9 +1302,9 @@ class BattleRoyaleService extends ChangeNotifier {
   Future<void> _markRoomEnded() async {
     final rid = _roomId;
     if (rid == null) return;
-    // br_end_match (see migrations/0006 + 0007) validates caller, winner,
-    // min match duration, AND that every non-winner has either a death
-    // record or a stale heartbeat. The last condition can briefly fail
+    // br_end_match (see migrations/0006/0007/0009) validates caller, winner,
+    // AND that every non-winner has either a death record or a stale
+    // heartbeat. The last condition can briefly fail
     // when this client receives the last death broadcast before the
     // dying client's `br_report_death` lands in the DB (single network
     // hop race). Retry with backoff so the call doesn't permanently fail

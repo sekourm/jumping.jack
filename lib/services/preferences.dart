@@ -41,8 +41,7 @@ class Preferences {
   static String _playerName = '';
   static String _recoveryCode = '';
   static AppLocale _locale = AppLocale.fr;
-  // Mute is ON by default so the app doesn't blast audio on first load.
-  static bool _muted = true;
+  static bool _muted = false;
 
   /// Loads persisted values into memory. Must be awaited before any reads.
   ///
@@ -89,7 +88,7 @@ class Preferences {
       (l) => l.name == localeName,
       orElse: () => AppLocale.fr,
     );
-    _muted = _prefs?.getBool(_kMuted) ?? true;
+    _muted = _prefs?.getBool(_kMuted) ?? false;
 
     // Stage 2: cloud is the source of truth. Overwrites the mirror on
     // success, or resets it on "no row" so a DB wipe is reflected on

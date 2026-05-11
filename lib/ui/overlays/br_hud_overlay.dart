@@ -7,6 +7,7 @@ import '../../game/jumping_jack_game.dart';
 import '../../i18n/i18n.dart';
 import '../../services/audio_manager.dart';
 import '../../services/battle_royale_service.dart';
+import '../screens/lobby_screen.dart';
 import '../theme/jack_design.dart';
 import '../widgets/fortnite_button.dart';
 import '../widgets/jack_ico.dart';
@@ -110,17 +111,37 @@ class _BrHudOverlayState extends State<BrHudOverlay>
                       Align(
                         alignment: Alignment.bottomCenter,
                         child: Padding(
-                          padding: const EdgeInsets.only(bottom: 24),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 24,
+                          ),
                           child: ConstrainedBox(
                             constraints:
-                                const BoxConstraints(maxWidth: 220),
-                            child: FortniteButton(
-                              label: I18n.t.quit,
-                              icoName: IcoName.close,
-                              style: FortniteButtonStyle.cyan,
-                              height: 52,
-                              fontSize: 16,
-                              onPressed: () => _quit(context),
+                                const BoxConstraints(maxWidth: 420),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: FortniteButton(
+                                    label: I18n.t.menu,
+                                    icoName: IcoName.home,
+                                    style: FortniteButtonStyle.cyan,
+                                    height: 52,
+                                    fontSize: 14,
+                                    onPressed: () => _quit(context),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: FortniteButton(
+                                    label: I18n.t.replay,
+                                    icoName: IcoName.flame,
+                                    style: FortniteButtonStyle.epic,
+                                    height: 52,
+                                    fontSize: 14,
+                                    onPressed: () => _replay(context),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
@@ -154,7 +175,26 @@ class _BrHudOverlayState extends State<BrHudOverlay>
     await BattleRoyaleService.instance.leaveMatch();
     BattleRoyaleService.resetInstance();
     if (!context.mounted) return;
+    AudioManager.playMenuMusic();
     Navigator.of(context).popUntil((r) => r.isFirst);
+  }
+
+  Future<void> _replay(BuildContext context) async {
+    AudioManager.click();
+    await BattleRoyaleService.instance.leaveMatch();
+    BattleRoyaleService.resetInstance();
+    if (!context.mounted) return;
+    final navigator = Navigator.of(context);
+    navigator.popUntil((r) => r.isFirst);
+    navigator.push(
+      PageRouteBuilder<void>(
+        pageBuilder: (_, a, b) => const LobbyScreen(quickJoin: true),
+        transitionDuration: const Duration(milliseconds: 200),
+        reverseTransitionDuration: const Duration(milliseconds: 200),
+        transitionsBuilder: (_, animation, b, child) =>
+            FadeTransition(opacity: animation, child: child),
+      ),
+    );
   }
 }
 
