@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -18,7 +19,7 @@ import 'game_screen.dart';
 import 'lobby_screen.dart';
 
 /// Bumped manually before each push so we can verify the deploy is live.
-const String kAppVersion = 'v3.0';
+const String kAppVersion = 'v1.0';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -28,21 +29,24 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver {
   // Picked once per HomeScreen mount → on every relaunch / return-to-menu the
   // background world is randomized.
   late final JackStage _stage;
-  late final AnimationController _floatCtrl;
+  // GlobalKey on the BR button → lets us read its on-screen rect so the
+  // tutorial-locked bubble can anchor right above it.
+  final GlobalKey _brButtonKey = GlobalKey();
+  // Tutorial-locked speech bubble state. Shown briefly when the user
+  // taps the BR button before completing the tutorial; auto-dismissed
+  // after ~3 s or on tap anywhere.
+  bool _brLockedBubbleVisible = false;
+  Timer? _brLockedBubbleTimer;
 
   @override
   void initState() {
     super.initState();
     final rng = Random();
     _stage = JackStage.worlds[rng.nextInt(JackStage.worlds.length)];
-    _floatCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 3000),
-    )..repeat(reverse: true);
     WidgetsBinding.instance.addObserver(this);
     I18n.instance.addListener(_onLocaleChanged);
     AudioManager.preload().then((_) => AudioManager.startMenuMusic());
@@ -50,7 +54,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
-    _floatCtrl.dispose();
+    _brLockedBubbleTimer?.cancel();
     I18n.instance.removeListener(_onLocaleChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -116,6 +120,18 @@ class _HomeScreenState extends State<HomeScreen>
                         children: [
                           _LangChip(),
                           const SizedBox(width: 8),
+                          // Help button is gated on tutorialCompleted:
+                          // its only entry today is "Rejouer le
+                          // tutoriel", which makes no sense for a
+                          // player who hasn't completed it once.
+                          if (Preferences.tutorialCompleted) ...[
+                            _RoundIconBtn(
+                              icoName: IcoName.help,
+                              onPressed: _openHelp,
+                              tooltip: I18n.t.helpTitle,
+                            ),
+                            const SizedBox(width: 8),
+                          ],
                           _RoundIconBtn(
                             icoName: Preferences.muted
                                 ? IcoName.volumeOff
@@ -131,16 +147,10 @@ class _HomeScreenState extends State<HomeScreen>
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        AnimatedBuilder(
-                          animation: _floatCtrl,
-                          builder: (context, child) {
-                            final t = Curves.easeInOut.transform(_floatCtrl.value);
-                            return Transform.translate(
-                              offset: Offset(0, -6 * t),
-                              child: child,
-                            );
-                          },
-                          child: const JackMascot(size: 84, face: MascotFace.smile),
+                        const JackMascot(
+                          size: 84,
+                          face: MascotFace.smile,
+                          idleAnimated: true,
                         ),
                         const SizedBox(height: 14),
                         const JackLogo(),
@@ -173,13 +183,26 @@ class _HomeScreenState extends State<HomeScreen>
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: FortniteButton(
-                            label: I18n.t.battleRoyale,
-                            icoName: IcoName.flame,
-                            style: FortniteButtonStyle.epic,
-                            onPressed: _openBattleRoyale,
-                            height: 60,
-                            fontSize: 14,
+                          // BR stays visible+tappable even before the
+                          // tutorial is completed so the user can still
+                          // tap it — they just get the locked-bubble
+                          // pointing them at the solo tutorial. Opacity
+                          // at 45 % mirrors the FortniteButton's own
+                          // disabled styling so the lock state reads at
+                          // a glance. GlobalKey lets the bubble anchor
+                          // to this button's rect.
+                          child: Opacity(
+                            key: _brButtonKey,
+                            opacity:
+                                Preferences.tutorialCompleted ? 1.0 : 0.45,
+                            child: FortniteButton(
+                              label: I18n.t.battleRoyale,
+                              icoName: IcoName.flame,
+                              style: FortniteButtonStyle.epic,
+                              onPressed: _openBattleRoyale,
+                              height: 60,
+                              fontSize: 14,
+                            ),
                           ),
                         ),
                       ],
@@ -189,9 +212,33 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
           ),
+          // Tutorial-locked speech bubble. Rendered at the top of the
+          // home Stack (above the action buttons) so the tail sits
+          // directly above the BR button without being clipped by the
+          // SafeArea content.
+          if (_brLockedBubbleVisible)
+            _BrLockedBubbleAnchor(
+              anchorKey: _brButtonKey,
+              onTap: _hideBrLockedBubble,
+            ),
         ],
       ),
     );
+  }
+
+  void _showBrLockedBubble() {
+    _brLockedBubbleTimer?.cancel();
+    setState(() => _brLockedBubbleVisible = true);
+    _brLockedBubbleTimer = Timer(const Duration(milliseconds: 3500), () {
+      if (mounted) _hideBrLockedBubble();
+    });
+  }
+
+  void _hideBrLockedBubble() {
+    _brLockedBubbleTimer?.cancel();
+    _brLockedBubbleTimer = null;
+    if (!_brLockedBubbleVisible) return;
+    setState(() => _brLockedBubbleVisible = false);
   }
 
   void _startGame() {
@@ -216,6 +263,47 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
+  Future<void> _openHelp() async {
+    AudioManager.click();
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.75),
+      builder: (ctx) => _HelpDialog(
+        onReplayTutorial: () {
+          AudioManager.uiConfirm();
+          // No persisted change here on purpose: the replay flow uses
+          // an in-memory `tutorialReplay: true` flag on the game so
+          // closing the app mid-replay can't strand the user with the
+          // BR button greyed out on next launch.
+          Navigator.of(ctx).pop();
+          _launchTutorialReplay();
+        },
+      ),
+    );
+  }
+
+  /// Pushes the [GameScreen] in tutorial-replay mode. The overlay
+  /// drives the lesson and pops back here on completion, so the user
+  /// never lands in an actual solo run — they just watched the
+  /// tutorial. Music and home state refresh on return.
+  void _launchTutorialReplay() {
+    Navigator.of(context)
+        .push(
+      PageRouteBuilder<void>(
+        pageBuilder: (_, a, b) => const GameScreen(tutorialReplay: true),
+        transitionDuration: const Duration(milliseconds: 180),
+        reverseTransitionDuration: const Duration(milliseconds: 180),
+        transitionsBuilder: (_, animation, b, child) =>
+            FadeTransition(opacity: animation, child: child),
+      ),
+    )
+        .then((_) {
+      if (!mounted) return;
+      AudioManager.startMenuMusic();
+      setState(() {});
+    });
+  }
+
   void _toggleMute() async {
     AudioManager.click();
     final next = !Preferences.muted;
@@ -226,6 +314,10 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _openBattleRoyale() {
     AudioManager.click();
+    if (!Preferences.tutorialCompleted) {
+      _showBrLockedBubble();
+      return;
+    }
     if (!SupabaseConfig.isConfigured) {
       _showToast(I18n.t.backendNotConfigured);
       return;
@@ -964,6 +1056,360 @@ class _RestoreEntry extends StatelessWidget {
             color: Colors.white.withValues(alpha: 0.55),
             letterSpacing: 1.6,
           ).copyWith(decoration: TextDecoration.underline),
+        ),
+      ),
+    );
+  }
+}
+
+/// Speech-bubble overlay shown above the BR button when the user taps
+/// it before completing the tutorial. Anchors to [anchorKey]'s render
+/// box so the tail points at the exact button rect; falls back to a
+/// centred-above-the-bottom position if the layout hasn't settled yet.
+///
+/// Tap anywhere on the bubble (or the surrounding transparent area) to
+/// dismiss; the parent also auto-dismisses on a timer to avoid a stuck
+/// hint if the user navigates elsewhere.
+class _BrLockedBubbleAnchor extends StatefulWidget {
+  const _BrLockedBubbleAnchor({
+    required this.anchorKey,
+    required this.onTap,
+  });
+
+  final GlobalKey anchorKey;
+  final VoidCallback onTap;
+
+  @override
+  State<_BrLockedBubbleAnchor> createState() =>
+      _BrLockedBubbleAnchorState();
+}
+
+class _BrLockedBubbleAnchorState extends State<_BrLockedBubbleAnchor>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  /// Mid-X of the BR button (so the bubble's tail sits at its centre).
+  /// Returns null if the render box isn't ready — happens on the very
+  /// first frame after a state change; the parent will rebuild as soon
+  /// as it is.
+  ({double centerX, double topY})? _anchorRect() {
+    final ctx = widget.anchorKey.currentContext;
+    if (ctx == null) return null;
+    final box = ctx.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return null;
+    final origin = box.localToGlobal(Offset.zero);
+    return (
+      centerX: origin.dx + box.size.width / 2,
+      topY: origin.dy,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final anchor = _anchorRect();
+    return Positioned.fill(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedBuilder(
+          animation: _ctrl,
+          builder: (context, child) {
+            final t = Curves.easeOutBack.transform(_ctrl.value);
+            return Opacity(
+              opacity: _ctrl.value,
+              child: Transform.translate(
+                offset: Offset(0, 8 * (1 - t)),
+                child: child,
+              ),
+            );
+          },
+          child: anchor == null
+              ? const SizedBox.shrink()
+              : _BrLockedBubble(
+                  anchorCenterX: anchor.centerX,
+                  anchorTopY: anchor.topY,
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BrLockedBubble extends StatelessWidget {
+  const _BrLockedBubble({
+    required this.anchorCenterX,
+    required this.anchorTopY,
+  });
+
+  /// Centre-X of the BR button in screen space — used both to centre
+  /// the bubble horizontally above the button and to place the tail.
+  final double anchorCenterX;
+  /// Top edge of the BR button in screen space — the tail sits a few
+  /// pixels above this.
+  final double anchorTopY;
+
+  @override
+  Widget build(BuildContext context) {
+    const tailHeight = 12.0;
+    const gap = 8.0;
+    // Estimated bubble height for positioning. Slight over-shoot so the
+    // bubble's bottom (tail base) lands cleanly above the button.
+    const bubbleEstHeight = 86.0;
+    final size = MediaQuery.of(context).size;
+    final bubbleTop =
+        (anchorTopY - bubbleEstHeight - tailHeight - gap).clamp(40.0, double.infinity);
+    return Stack(
+      children: [
+        Positioned(
+          top: bubbleTop,
+          left: 20,
+          right: 20,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 320),
+              child: CustomPaint(
+                painter: _BrBubbleTailPainter(
+                  // Tail x in the painter's local coords. We need to
+                  // know where the bubble actually ends up on screen
+                  // to anchor the tail under it.
+                  bubbleScreenCenterX: size.width / 2,
+                  anchorScreenCenterX: anchorCenterX,
+                ),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: JackDesign.bg.withValues(alpha: 0.94),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: JackDesign.purple, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: JackDesign.purple.withValues(alpha: 0.55),
+                        blurRadius: 18,
+                      ),
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.40),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const JackIco(
+                        name: IcoName.flame,
+                        color: JackDesign.purple,
+                      ),
+                      const SizedBox(width: 10),
+                      Flexible(
+                        child: Text(
+                          I18n.t.tutorialRequiredForBr,
+                          style: JackDesign.manrope(
+                            fontSize: 12,
+                            weight: FontWeight.w800,
+                            color: Colors.white,
+                            letterSpacing: 1.0,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Draws the downward-pointing triangle below the BR-locked bubble.
+/// The tail aims at the BR button's centre X regardless of where the
+/// bubble itself ended up sitting (which is constrained by max-width
+/// + screen padding).
+class _BrBubbleTailPainter extends CustomPainter {
+  _BrBubbleTailPainter({
+    required this.bubbleScreenCenterX,
+    required this.anchorScreenCenterX,
+  });
+  final double bubbleScreenCenterX;
+  final double anchorScreenCenterX;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Tail x within the bubble's local coords. We approximate the
+    // bubble's local center as size.width/2 and offset toward the
+    // anchor — clamped to stay inside the bubble's width with a 24 px
+    // margin from each edge so the tail can't pop off.
+    final delta = anchorScreenCenterX - bubbleScreenCenterX;
+    final cx = (size.width / 2 + delta).clamp(24.0, size.width - 24.0);
+    const tailWidth = 18.0;
+    const tailHeight = 12.0;
+    final baseY = size.height;
+    final fill = Paint()..color = JackDesign.bg.withValues(alpha: 0.94);
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeJoin = StrokeJoin.round
+      ..color = JackDesign.purple;
+    final path = Path()
+      ..moveTo(cx - tailWidth / 2, baseY - 1)
+      ..lineTo(cx, baseY + tailHeight)
+      ..lineTo(cx + tailWidth / 2, baseY - 1);
+    canvas.drawPath(path, fill);
+    canvas.drawPath(path, stroke);
+  }
+
+  @override
+  bool shouldRepaint(_BrBubbleTailPainter old) =>
+      old.bubbleScreenCenterX != bubbleScreenCenterX ||
+      old.anchorScreenCenterX != anchorScreenCenterX;
+}
+
+/// Help dialog opened from the home's `?` icon. Currently exposes a
+/// single action — replay the solo tutorial — but the layout is built
+/// as a list so additional entries (FAQ links, support contact, etc.)
+/// can drop in later without restructuring.
+class _HelpDialog extends StatelessWidget {
+  const _HelpDialog({required this.onReplayTutorial});
+  final VoidCallback onReplayTutorial;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+        decoration: BoxDecoration(
+          color: JackDesign.bg.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: JackDesign.yellow, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: JackDesign.yellow.withValues(alpha: 0.35),
+              blurRadius: 24,
+            ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.55),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const JackIco(name: IcoName.help, color: JackDesign.yellow),
+                const SizedBox(width: 10),
+                Text(
+                  I18n.t.helpTitle,
+                  style: JackDesign.bungee(
+                    fontSize: 18,
+                    color: JackDesign.yellow,
+                    letterSpacing: 3,
+                  ),
+                ),
+                const Spacer(),
+                _RoundIconBtn(
+                  icoName: IcoName.close,
+                  onPressed: () => Navigator.of(context).pop(),
+                  tooltip: 'X',
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _HelpEntry(
+              label: I18n.t.helpReplayTutorial,
+              desc: I18n.t.helpReplayTutorialDesc,
+              icoName: IcoName.replay,
+              onPressed: onReplayTutorial,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One clickable row inside the help dialog. Icon on the left, label +
+/// description on the right, full-width hit target. Same look-and-feel
+/// as a list item so adding more entries doesn't break the rhythm.
+class _HelpEntry extends StatelessWidget {
+  const _HelpEntry({
+    required this.label,
+    required this.desc,
+    required this.icoName,
+    required this.onPressed,
+  });
+  final String label;
+  final String desc;
+  final IcoName icoName;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.04),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          child: Row(
+            children: [
+              JackIco(name: icoName, color: JackDesign.yellow),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: JackDesign.manrope(
+                        fontSize: 13,
+                        weight: FontWeight.w800,
+                        color: Colors.white,
+                        letterSpacing: 1.6,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      desc,
+                      style: JackDesign.manrope(
+                        fontSize: 11,
+                        weight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.60),
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

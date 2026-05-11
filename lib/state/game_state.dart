@@ -110,16 +110,30 @@ class GameState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void onJumpLanded() {
+  /// Forces a listener notify without changing any state. Used by the
+  /// tutorial flow to refresh the HUD the moment coaching ends so the
+  /// score + combo widgets unhide immediately (the next natural
+  /// gameState change otherwise gates them behind the player's next
+  /// input).
+  void poke() => notifyListeners();
+
+  void onJumpLanded({bool combo = true}) {
     _successfulJumps++;
     _grounded = true;
-    // Combo: chain only if the previous window hadn't expired.
-    if (_comboTimer > 0) {
-      _comboCount++;
+    // Combo: chain only if the previous window hadn't expired. The
+    // tutorial layer passes `combo: false` so a coaching landing never
+    // bumps the badge (the player has no idea what a combo is yet).
+    if (combo) {
+      if (_comboTimer > 0) {
+        _comboCount++;
+      } else {
+        _comboCount = 1;
+      }
+      _comboTimer = GameConfig.comboWindow;
     } else {
-      _comboCount = 1;
+      _comboCount = 0;
+      _comboTimer = 0;
     }
-    _comboTimer = GameConfig.comboWindow;
     if (GameConfig.timerEnabled &&
         _successfulJumps >= GameConfig.timerStartsAfterJumps) {
       _timerRemaining = GameConfig.timerInitialSeconds;

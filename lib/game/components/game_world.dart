@@ -18,6 +18,7 @@ class GameWorld extends PositionComponent {
     int? seed,
     this.randomPickups = true,
     this.densityFactor = 1.0,
+    this.tutorialMode = false,
   }) : _rng = Random(seed);
 
   double viewportWidth;
@@ -37,6 +38,14 @@ class GameWorld extends PositionComponent {
   /// platforms (used in Battle Royale where the camera is aggressive and
   /// players need more options to keep climbing).
   final double densityFactor;
+
+  /// True while the tutorial coaching layer is up: only the starting
+  /// platform + 2 perfectly-placed, deterministic coaching platforms are
+  /// spawned (no clutter above to confuse / frustrate the new player).
+  /// [JumpingJackGame] flips this off via [exitTutorialMode] when the
+  /// player completes the tutorial; the procedural spawner then fills
+  /// the rest of the visible world from where it left off.
+  bool tutorialMode;
   double _highestY = 0; // y of last spawned (highest) platform
   int _spawnIndex = 0;
   int _platformsSinceLastPickup = 0;
@@ -66,13 +75,67 @@ class GameWorld extends PositionComponent {
     platforms.add(start);
     add(start);
 
+    if (tutorialMode) {
+      _spawnTutorialPlatforms();
+    } else {
+      while (_highestY > 0) {
+        _spawnNext();
+      }
+    }
+  }
+
+  /// Drops three perfectly-placed, deterministic platforms above the
+  /// starting platform in a regular staircase pattern — each step a
+  /// fixed horizontal AND vertical distance from the previous one, so
+  /// the player learns the hold-aim-release loop on three identical
+  /// motions. Standard type (no moving / bouncy quirks during the
+  /// onboarding).
+  void _spawnTutorialPlatforms() {
+    const dyStep = 90.0;
+    final w = GameConfig.platformWidth;
+    final centerX = viewportWidth / 2;
+    // Horizontal step between consecutive stair platforms. Capped to
+    // stay well inside the reachable jump envelope so a centred
+    // medium-charge jump always covers a step.
+    final dxStep = (viewportWidth * 0.20).clamp(60.0, 95.0);
+
+    // Stair runs left → right starting from a left-of-centre anchor:
+    //   Plat 1 ≈ centre - dxStep
+    //   Plat 2 ≈ centre
+    //   Plat 3 ≈ centre + dxStep
+    // Each step adds [dyStep] of altitude on top of the previous one,
+    // so the visual cue is identical for all three jumps.
+    for (var i = 0; i < 3; i++) {
+      final stepY = _highestY - dyStep;
+      final stepCenterX =
+          (centerX - dxStep + i * dxStep).clamp(w / 2, viewportWidth - w / 2);
+      final p = Platform(
+        position: Vector2(stepCenterX - w / 2, stepY),
+        width: w,
+      );
+      platforms.add(p);
+      add(p);
+      _highestY = stepY;
+      _spawnIndex++;
+    }
+  }
+
+  /// Resumes procedural spawning after the tutorial completes. Continues
+  /// from the last hardcoded coaching platform so the visible world
+  /// fills back to the top of the viewport seamlessly.
+  void exitTutorialMode({required double viewportHeight}) {
+    if (!tutorialMode) return;
+    tutorialMode = false;
     while (_highestY > 0) {
       _spawnNext();
     }
   }
 
   /// Make sure platforms exist up to [targetTopWorldY] (inclusive).
+  /// While [tutorialMode] is on the world is intentionally frozen at
+  /// its 3 hand-placed platforms — no spawning beyond.
   void ensureCovered(double targetTopWorldY) {
+    if (tutorialMode) return;
     while (_highestY > targetTopWorldY) {
       _spawnNext();
     }

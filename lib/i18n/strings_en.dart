@@ -69,6 +69,33 @@ class StringsEn implements Strings {
   String get back => 'BACK';
   @override
   String get dontShowAgain => "No worries, I got it";
+  @override
+  String tutorialCoaching(int done, int target) =>
+      'Land on $target platforms  ·  $done/$target';
+  @override
+  String get tutorialRequiredForBr =>
+      'Finish the solo tutorial to unlock Battle Royale';
+  @override
+  List<String> get tutorialIntroBubbles => const [
+        "Hey there, I'm Jack!",
+        'Hold your finger to charge your jump.',
+        'Aim in any direction, then release to fly.',
+        'Land on 3 platforms to finish the tutorial.',
+      ];
+  @override
+  String get tutorialTapToContinue => 'Tap to continue';
+  @override
+  String get tutorialOutroBubble =>
+      'Nicely done! Now for the real thing…';
+  @override
+  String get tutorialTapToStart => 'Tap to start';
+  @override
+  String get helpTitle => 'HELP';
+  @override
+  String get helpReplayTutorial => 'Replay the tutorial';
+  @override
+  String get helpReplayTutorialDesc =>
+      'Re-runs the learning sequence with Jack on your next solo run.';
 
   // Death overlay
   @override

@@ -17,6 +17,31 @@ enum BrPhase {
   error,
 }
 
+/// Deterministic 32-bit hash usable across Flutter targets.
+///
+/// `String.hashCode` is **not** stable between the Dart VM (iOS / Android /
+/// desktop) and dart2js (web) — same input, different output. Seeding the
+/// procedural BR world or the bot RNG with `roomId.hashCode` therefore makes
+/// iOS and Chrome generate two different worlds for the same match, with
+/// platforms landing at different coordinates and bots having different
+/// lifespans on each client.
+///
+/// Implementation: FNV-1a over UTF-16 code units, finished with the
+/// MurmurHash3 32-bit finalizer for better avalanche on short inputs (room
+/// ids are uuids; without the finalizer adjacent seeds barely differ).
+int stableSeed(String s) {
+  var hash = 0x811C9DC5;
+  for (final code in s.codeUnits) {
+    hash = ((hash ^ code) * 0x01000193) & 0xFFFFFFFF;
+  }
+  hash ^= hash >> 16;
+  hash = (hash * 0x85EBCA6B) & 0xFFFFFFFF;
+  hash ^= hash >> 13;
+  hash = (hash * 0xC2B2AE35) & 0xFFFFFFFF;
+  hash ^= hash >> 16;
+  return hash;
+}
+
 class _BotPos {
   const _BotPos({
     required this.x,
@@ -817,26 +842,9 @@ class BattleRoyaleService extends ChangeNotifier {
 
   /// Deterministic faux BR win count for a bot, derived from its id so
   /// the lobby shows a stable number every time the same bot reappears.
-  ///
-  /// Uses an FNV-1a byte hash followed by the MurmurHash3 finalizer so
-  /// adjacent bot ids (which only differ in their trailing slot digit
-  /// 0-4) avalanche into very different buckets — otherwise all five
-  /// bots in a room land on near-identical counts and the lobby reads
-  /// as obviously synthetic.
-  int _fauxBotWins(String botId) {
-    var hash = 0x811C9DC5;
-    for (final code in botId.codeUnits) {
-      hash = ((hash ^ code) * 0x01000193) & 0xFFFFFFFF;
-    }
-    hash ^= hash >> 16;
-    hash = (hash * 0x85EBCA6B) & 0xFFFFFFFF;
-    hash ^= hash >> 13;
-    hash = (hash * 0xC2B2AE35) & 0xFFFFFFFF;
-    hash ^= hash >> 16;
-    // 0-87 reads like plausible lifetime BR counts: most casuals sit
-    // around 5-30, a handful flex into the 60-80s.
-    return hash % 88;
-  }
+  /// 0-87 reads like plausible lifetime BR counts: most casuals sit
+  /// around 5-30, a handful flex into the 60-80s.
+  int _fauxBotWins(String botId) => stableSeed(botId) % 88;
 
   /// Reads the room's `created_at` and aligns [_countdownRemaining] so a
   /// player joining in the middle of the lobby sees the same countdown as
@@ -911,7 +919,7 @@ class BattleRoyaleService extends ChangeNotifier {
         if (!taken.contains(i)) i,
     ];
     final pool = List<String>.from(_botPseudonyms)
-      ..shuffle(Random(rid.hashCode));
+      ..shuffle(Random(stableSeed(rid)));
     final botSlots = <int>[];
     final botPlayerIds = <String>[];
     final botNames = <String>[];

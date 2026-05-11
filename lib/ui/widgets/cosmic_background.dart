@@ -57,9 +57,13 @@ class _CosmicBackgroundState extends State<CosmicBackground>
   @override
   void initState() {
     super.initState();
+    // 60 s loop. Long enough that the vertical star drift reads as a slow
+    // calm float (rather than a distracting scroll), short enough that the
+    // floating-point precision of the modulo wrap stays clean over the
+    // wallclock lifetime of the home screen.
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 4),
+      duration: const Duration(seconds: 60),
     )..repeat();
   }
 
@@ -79,7 +83,7 @@ class _CosmicBackgroundState extends State<CosmicBackground>
         painter: _CosmicPainter(
           stage: stage,
           stars: widget._stars,
-          twinkle: _ctrl.value,
+          drift: _ctrl.value,
         ),
         size: Size.infinite,
       ),
@@ -101,11 +105,19 @@ class _CosmicPainter extends CustomPainter {
   _CosmicPainter({
     required this.stage,
     required this.stars,
-    required this.twinkle,
+    required this.drift,
   });
   final JackStage stage;
   final List<_Star> stars;
-  final double twinkle;
+  /// 0..1 wrap-around progress over the controller period. Drives both
+  /// the upward parallax scroll of the star field and (rescaled by
+  /// [_twinkleCyclesPerLoop]) the per-star alpha flicker.
+  final double drift;
+
+  /// Sin-wave cycles per controller loop used for star twinkle. The
+  /// controller runs at 60 s; 15 cycles ≈ one twinkle per 4 s, which
+  /// matches the previous standalone twinkle controller.
+  static const double _twinkleCyclesPerLoop = 15.0;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -146,39 +158,32 @@ class _CosmicPainter extends CustomPainter {
 
     final paint = Paint();
     for (final s in stars) {
+      // Parallax drift: bigger stars travel faster (read as closer) for a
+      // gentle depth illusion. Speed range 0.3..1.0 of one full screen
+      // height per controller loop. `%` in Dart is always non-negative
+      // for a positive divisor, so the subtraction wraps cleanly into
+      // [0, 1) regardless of the drift / size combination.
+      final speed = 0.3 + ((s.size - 0.6) / 1.6).clamp(0.0, 1.0) * 0.7;
+      final yProgress = (s.y - drift * speed) % 1.0;
       final cx = s.x * w;
-      final cy = s.y * h;
-      // Twinkle: sin wave with per-star phase offset.
-      final flicker = 0.5 + 0.5 * sin(twinkle * 2 * pi + s.phase * 4);
+      final cy = yProgress * h;
+      // Twinkle: sin wave with per-star phase offset. Rescaled because
+      // the controller now loops every 60 s instead of 4 s.
+      final flicker = 0.5 +
+          0.5 *
+              sin(drift * 2 * pi * _twinkleCyclesPerLoop + s.phase * 4);
       final brightness = 0.30 + 0.55 * flicker;
       paint.color = Colors.white.withValues(alpha: brightness);
       canvas.drawCircle(Offset(cx, cy), s.size, paint);
     }
 
-    // Saturn ring hint — two concentric ellipses on the right side.
-    if (stage == JackStage.saturn) {
-      final ringRect = Rect.fromCenter(
-        center: Offset(w * 0.85, h * 0.18),
-        width: w * 0.55,
-        height: h * 0.10,
-      );
-      final ringPaint = Paint()
-        ..color = JackDesign.yellow.withValues(alpha: 0.40)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2;
-      canvas.drawOval(ringRect, ringPaint);
-      final ringRect2 = ringRect.deflate(min(w, h) * 0.04);
-      canvas.drawOval(
-        ringRect2,
-        Paint()
-          ..color = JackDesign.yellowHi.withValues(alpha: 0.40)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5,
-      );
-    }
+    // (Removed) Saturn ring hint — the two flat concentric ellipses read
+    // as an ugly disc layered on top of the sky gradient rather than as
+    // planetary rings. The saturn stage still reads through its tinted
+    // gradient + nebula blobs alone.
   }
 
   @override
   bool shouldRepaint(_CosmicPainter old) =>
-      old.stage != stage || old.twinkle != twinkle;
+      old.stage != stage || old.drift != drift;
 }

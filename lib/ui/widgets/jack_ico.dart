@@ -20,6 +20,7 @@ enum IcoName {
   finger,
   volumeOn,
   volumeOff,
+  help,
 }
 
 class JackIco extends StatelessWidget {
@@ -98,8 +99,28 @@ class _IcoPainter extends CustomPainter {
         _volumeOn(canvas, fill, stroke);
       case IcoName.volumeOff:
         _volumeOff(canvas, fill, stroke);
+      case IcoName.help:
+        _help(canvas, fill, stroke);
     }
     canvas.restore();
+  }
+
+  void _help(Canvas c, Paint fill, Paint stroke) {
+    // Hollow ring + "?" mark. Strokes-only so the icon reads as a hint
+    // affordance rather than a primary action.
+    c.drawCircle(const Offset(12, 12), 9, stroke);
+    final mark = Path()
+      ..moveTo(9, 10)
+      // Top arc of the "?": curl from bottom-left up over the top to a
+      // tail dropping back down to centre.
+      ..arcToPoint(const Offset(15, 10),
+          radius: const Radius.circular(3))
+      ..arcToPoint(const Offset(12, 14),
+          radius: const Radius.circular(3), clockwise: false)
+      ..lineTo(12, 16);
+    c.drawPath(mark, stroke);
+    // Dot at the bottom of the "?".
+    c.drawCircle(const Offset(12, 18.5), 1.2, fill);
   }
 
   void _volumeOn(Canvas c, Paint fill, Paint stroke) {

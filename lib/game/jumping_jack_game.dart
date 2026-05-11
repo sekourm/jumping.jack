@@ -38,6 +38,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
   JumpingJackGame({
     required this.gameState,
     this.isBattleRoyale = false,
+    this.tutorialReplay = false,
   });
 
   /// Don't auto-pause the Flame engine when the tab goes to background.
@@ -55,6 +56,13 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
 
   final GameState gameState;
   final bool isBattleRoyale;
+
+  /// True when the player opened this run via the home help dialog to
+  /// replay the tutorial. The [TutorialOverlay] inspects this flag at
+  /// its outro tap-to-start moment: instead of calling [restart] to
+  /// start a real solo run, it pops the GameScreen so the user lands
+  /// back on the home — they came here only to replay the lesson.
+  final bool tutorialReplay;
   int _lastBroadcastScore = -1;
   double _myPosBroadcastTimer = 0;
   final Map<String, BotPlayer> _bots = {};
@@ -114,6 +122,67 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
   /// Public accessor used by [RemotePlayer] ghosts to clamp their Y so
   /// they don't drift above the player's visible (already-generated) world.
   double get cameraY => _cameraY;
+
+  /// When true, the solo camera stops rising so the player can take their
+  /// time on the first jumps without being punished. Toggled by the
+  /// tutorial coaching layer ([TutorialOverlay]) between the dismissal of
+  /// the explanatory slides and the moment the player has landed enough
+  /// jumps to complete the tutorial. Does NOT affect Battle Royale, which
+  /// has its own camera logic anyway.
+  bool get tutorialCoachingActive => _tutorialCoachingActive;
+  set tutorialCoachingActive(bool value) {
+    if (_tutorialCoachingActive == value) return;
+    final wasActive = _tutorialCoachingActive;
+    _tutorialCoachingActive = value;
+    // On the true → false edge: snapshot how many platforms the player
+    // had reached so the trajectory-dots fade-out (3 platforms in solo)
+    // starts counting from the END of the tutorial; flip the world out
+    // of tutorial-mode so the procedural spawner picks up; and poke the
+    // HUD so the previously-hidden score + combo widgets reappear
+    // immediately. We DON'T poke on the false → true edge: that
+    // transition happens during the tutorial overlay's [initState],
+    // which is mid-build — calling notifyListeners() would mark the
+    // HUD's AnimatedBuilder dirty during build and crash with a
+    // "setState() called during build" assertion.
+    if (wasActive && !value) {
+      _platformsReachedAtTutorialEnd = gameState.platformsReached;
+      gameWorld.exitTutorialMode(viewportHeight: _worldHeight);
+      gameState.poke();
+    }
+  }
+  bool _tutorialCoachingActive = false;
+  int _platformsReachedAtTutorialEnd = 0;
+
+  /// Fired after every [respawnForCoaching] — the tutorial overlay uses
+  /// this to refresh its UI (e.g. the halo recomputes its anchor)
+  /// after a respawn. Stays null when the tutorial isn't running.
+  VoidCallback? onCoachingRespawn;
+
+  /// The platform the player launched their current jump from. Captured
+  /// in [_releaseJump] just before `lastLandedPlatform` is cleared, so
+  /// the tutorial coaching can respawn the player on it after a fall
+  /// (instead of dropping them all the way back to the base — too
+  /// punitive for a learning beat).
+  Platform? _preJumpPlatform;
+
+  /// Converts a world-space point into the on-screen pixel position used
+  /// by Flutter overlays sitting on top of the [GameWidget]. Mirrors the
+  /// transform applied in [_applyCameraToWorld]: scale by [_worldScale],
+  /// then translate by the letterbox + camera offset. Used by the
+  /// tutorial coaching layer to anchor the "aim here" halo on top of the
+  /// next target platform.
+  Offset worldToScreen(Vector2 worldPos) {
+    return Offset(
+      _letterboxX + worldPos.x * _worldScale,
+      _letterboxY + (worldPos.y + _cameraY) * _worldScale,
+    );
+  }
+
+  /// Read-only view of the procedural platforms list for overlays that
+  /// need to render anchored cues (tutorial halo). Returning the live
+  /// list is safe because callers must not mutate it; the game owns
+  /// spawn / cull, and external readers just iterate.
+  List<Platform> get platforms => gameWorld.platforms;
   double _shakeRemaining = 0;
   double _shakeAmplitude = 0;
   final Random _shakeRng = Random();
@@ -193,10 +262,13 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     add(CosmicGameBackground());
     // In Battle Royale, seed the procedural world with a hash of the room
     // id so every client in the same match generates identical platforms.
+    // stableSeed() is mandatory: String.hashCode diverges between dart2js
+    // (Chrome) and the Dart VM (iOS), which would otherwise produce two
+    // different worlds for the same match.
     int? worldSeed;
     if (isBattleRoyale) {
       final rid = BattleRoyaleService.instance.roomId;
-      if (rid != null) worldSeed = rid.hashCode;
+      if (rid != null) worldSeed = stableSeed(rid);
     }
     // In BR mode every client uses the same virtual viewport for world
     // generation so platforms end up at identical coordinates regardless
@@ -209,6 +281,14 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       seed: worldSeed,
       randomPickups: !isBattleRoyale,
       densityFactor: _platformDensityFactor,
+      // Solo + (tutorial-not-yet-completed OR explicit replay) → only
+      // the 3 hand-placed coaching platforms exist while the overlay
+      // is up; the rest of the procedural world is spawned once the
+      // tutorial flips off. The replay flag stays in memory (not
+      // persisted) so quitting mid-replay can't strand the user with
+      // the BR button greyed out on next launch.
+      tutorialMode: !isBattleRoyale &&
+          (!Preferences.tutorialCompleted || tutorialReplay),
     );
     add(gameWorld);
     _recomputeViewport();
@@ -254,7 +334,8 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
   /// client via [_syncRemotePlayers] reacting to the BR service flag.
   void _spawnBrPickup() {
     if (gameWorld.platforms.length < 5) return;
-    final seed = BattleRoyaleService.instance.roomId?.hashCode ?? 0;
+    final rid = BattleRoyaleService.instance.roomId;
+    final seed = rid == null ? 0 : stableSeed(rid);
     final idxRange = (gameWorld.platforms.length - 4).clamp(1, 99);
     final platformIdx = 4 + (seed.abs() % idxRange);
     if (platformIdx >= gameWorld.platforms.length) return;
@@ -313,7 +394,8 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
           // Bots: AI mode for the leader, remote (lerp) for everyone else.
           // All bots share the same baseline skill + lifespan so the match
           // stays fair — no more "the orange one" feeling overpowered.
-          final seed = (svc.roomId?.hashCode ?? 0) ^ p.slotIndex;
+          final rid = svc.roomId;
+          final seed = (rid == null ? 0 : stableSeed(rid)) ^ p.slotIndex;
           final rng = Random(seed);
           const skill = 1.0;
           final lifespan = 40 + rng.nextDouble() * 30;
@@ -472,13 +554,20 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     _lastComboTickStep = 0;
     _lastMilestoneIndex = -1;
     _wasInvincible = isBattleRoyale;
+    _platformsReachedAtTutorialEnd = 0;
     AudioManager.stopChargeLoop();
     AudioManager.dangerLoop(0);
     AudioManager.slowTimeLoop(false);
 
-    // 3 s "PRÊT?" countdown for both modes. In solo it lets the player
-    // settle after the tutorial dismisses; in BR it syncs the start.
-    _startCountdown = 3.0;
+    // 3 s "PRÊT?" countdown — skipped on the very first solo run AND
+    // on tutorial replays so the tutorial overlay (Jack's speech
+    // bubbles + coaching halo) takes over the start-of-match moment
+    // instead. BR always gets the countdown so every client launches
+    // in sync.
+    _startCountdown = (!isBattleRoyale &&
+            (!Preferences.tutorialCompleted || tutorialReplay))
+        ? 0.0
+        : 3.0;
     _brInvincibilityRemaining =
         isBattleRoyale ? brInvincibilityDuration : 0.0;
     _brWinSequenceTimer = 0;
@@ -647,7 +736,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
           AudioManager.bouncyChain(_bouncyChainCount);
         }
       } else {
-        gameState.onJumpLanded();
+        gameState.onJumpLanded(combo: !tutorialCoachingActive);
         GameProgress.update(gameState.platformsReached);
         _onLanded(landingSpeed);
         _autoCollectPickupsOnPlatform(landedOn);
@@ -782,6 +871,16 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     gameWorld.add(LandingBurst(
       origin: Vector2(player.position.x, player.position.y),
     ));
+
+    // Tutorial coaching: keep the kinaesthetic feedback (shake, squash,
+    // landing burst) but skip every score-bearing path. The new player
+    // shouldn't see "+N" popups or accumulate a score they don't
+    // understand the value of; the tutorial is purely about learning
+    // the mechanics. Skip wall-bounce bookkeeping too.
+    if (tutorialCoachingActive) {
+      _wallBouncesThisJump = 0;
+      return;
+    }
 
     // Score is only gained on landing, on a platform higher than any previous.
     final landingHeight = _initialPlayerFeetY - player.position.y;
@@ -1035,6 +1134,10 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       BattleRoyaleService.instance.notifyBrPickupCollected();
       return;
     }
+    // Tutorial coaching: ignore pickup effects entirely so the player
+    // doesn't see "+25" or "VISION" popups they have no context for.
+    // The pickup itself is still removed from the world by the caller.
+    if (tutorialCoachingActive) return;
     if (p is StarPickup) {
       final mult = gameState.comboMultiplier;
       final amount = (GameConfig.starBaseValue * mult).round();
@@ -1180,6 +1283,11 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       _riseCameraBr(dt);
       return;
     }
+    // Freeze the solo camera while the tutorial coaching layer is up so
+    // the player can practise their first jumps without time pressure.
+    // The flag is flipped off the moment they complete the coaching, so
+    // the rise resumes naturally from that frame onward.
+    if (tutorialCoachingActive) return;
 
     final playerScreenY = player.position.y + _cameraY;
     final comfortY = _desiredPlayerScreenY;
@@ -1493,10 +1601,38 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     // bottom (camera catching up) and being engulfed off the bottom kills.
     final playerScreenY = player.position.y + _cameraY;
     if (playerScreenY >= _worldHeight + GameConfig.playerSize) {
+      // Tutorial coaching: respawn on the starting platform instead of
+      // killing the player so a missed jump never breaks the onboarding
+      // flow. The tutorial overlay keeps its progress counter (driven by
+      // gameState.platformsReached, which only ticks on successful
+      // landings) so the user just needs to land two jumps total.
+      if (tutorialCoachingActive) {
+        respawnForCoaching();
+        return false;
+      }
       _handleDeath(DeathReason.offscreenBottom);
       return true;
     }
     return false;
+  }
+
+  /// Teleports the player back onto whichever platform they launched
+  /// from (or the starting platform if they hadn't jumped yet). Used by
+  /// the tutorial coaching layer so falling off the world isn't
+  /// punitive — the player picks back up from the same spot, with
+  /// their streak intact, and can simply try the next jump again.
+  void respawnForCoaching() {
+    final safe = _preJumpPlatform ?? gameWorld.platforms.first;
+    player.position = Vector2(
+      safe.position.x + safe.size.x / 2,
+      safe.topY,
+    );
+    player.velocity = Vector2.zero();
+    player.grounded = true;
+    player.lastLandedPlatform = safe;
+    player.resetVisuals();
+    AudioManager.click();
+    onCoachingRespawn?.call();
   }
 
   /// Bounce the player off the left/right viewport edges with a small energy
@@ -1605,16 +1741,24 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     preview.startPos = player.centerWorld;
     preview.initialVelocity = velocity;
     // Vision pickup overrides the natural fade for N jumps. Otherwise:
-    //  • Solo  → fast skill ramp (dots fade out over 3 platforms)
+    //  • Tutorial coaching → dots stay fully visible so the player has
+    //                       a clear arc cue while learning.
+    //  • Solo  → fast skill ramp (dots fade out over 3 platforms,
+    //            counted from the END of the tutorial so the fade
+    //            doesn't begin mid-coaching).
     //  • BR    → no trajectory dots at all, only the aim arrow. The user
     //            wants BR to be more skill-driven without the parabola
     //            preview, so visibility is forced to 0 unless a Vision
     //            pickup boost is active.
+    final platformsSincePostTutorial =
+        gameState.platformsReached - _platformsReachedAtTutorialEnd;
     preview.visibility = gameState.trajectoryBoostJumps > 0
         ? 1.0
         : isBattleRoyale
             ? 0.0
-            : (1.0 - gameState.platformsReached / 3.0).clamp(0.0, 1.0);
+            : tutorialCoachingActive
+                ? 1.0
+                : (1.0 - platformsSincePostTutorial / 3.0).clamp(0.0, 1.0);
     preview.active = true;
     // Feed the aim direction (normalized) to the player so the cube tilts
     // and the aim arrow renders.
@@ -1637,11 +1781,18 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       chargeProgress: _chargeProgress,
     );
     // Punitive: the platform we're launching from explodes on release.
-    // Skipped in Battle Royale — bots share these platforms and the
-    // explosion would empty the world too fast.
+    // Skipped in Battle Royale (bots share these platforms and the
+    // explosion would empty the world too fast) AND during the tutorial
+    // coaching layer (the player can fall back onto the base platform
+    // after a miss, so we keep the world intact; the camera will catch
+    // up and eat them naturally once the tutorial completes).
     final from = player.lastLandedPlatform;
     if (from != null) {
-      if (!isBattleRoyale) {
+      // Remember the launchpad so the tutorial respawner can drop the
+      // player back here after a fall instead of all the way back to
+      // the base platform.
+      _preJumpPlatform = from;
+      if (!isBattleRoyale && !tutorialCoachingActive) {
         gameWorld.explodeAndRemove(from);
       }
       player.lastLandedPlatform = null;
@@ -1657,7 +1808,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     _resetCharging();
     AudioManager.stopChargeLoop();
     AudioManager.jumpRelease();
-    if (!isBattleRoyale) {
+    if (!isBattleRoyale && !tutorialCoachingActive) {
       AudioManager.platformExplode();
     }
   }

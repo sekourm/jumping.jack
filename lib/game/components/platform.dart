@@ -204,38 +204,50 @@ class Platform extends PositionComponent {
     // cloud and the full-width starting platform reads as a continuous
     // cloud bank.
     final puffCount = (w / 18).round().clamp(3, 32);
-    final cellW = w / puffCount;
     final puffR = h * 0.90;
+    final outlineR = puffR + 1.5;
     final cy = h * 0.50;
+
+    // Inset puff x-centers so the (largest) outline circle of the first and
+    // last puff fits exactly within [0, w]. Without this inset the edge
+    // puffs bulge past the platform width — invisible on narrow platforms
+    // but very visible on the full-width starting platform, whose left and
+    // right edges sit flush with the screen edges.
+    final usableW = w - 2 * outlineR;
+    final step = puffCount > 1 && usableW > 0
+        ? usableW / (puffCount - 1)
+        : 0.0;
+    double centerX(int i) =>
+        puffCount == 1 ? w / 2 : outlineR + i * step;
 
     // 1. Outline silhouette (slightly larger circles in dark stroke colour).
     final outlinePaint = Paint()..color = outline;
     for (var i = 0; i < puffCount; i++) {
-      final cx = (i + 0.5) * cellW;
-      canvas.drawCircle(Offset(cx, cy), puffR + 1.5, outlinePaint);
+      canvas.drawCircle(Offset(centerX(i), cy), outlineR, outlinePaint);
     }
 
     // 2. Body fill (overlapping puffs on top of the outline).
     final bodyPaint = Paint()..color = body;
     for (var i = 0; i < puffCount; i++) {
-      final cx = (i + 0.5) * cellW;
-      canvas.drawCircle(Offset(cx, cy), puffR, bodyPaint);
+      canvas.drawCircle(Offset(centerX(i), cy), puffR, bodyPaint);
     }
 
     // 3. Underside shadow (lower-half darker tone, no blur — much
     // cheaper on iOS Safari and visually almost identical at this size).
     final shadowPaint = Paint()..color = shadow.withValues(alpha: 0.55);
     for (var i = 0; i < puffCount; i++) {
-      final cx = (i + 0.5) * cellW;
-      canvas.drawCircle(Offset(cx, h * 0.78), puffR * 0.78, shadowPaint);
+      canvas.drawCircle(
+        Offset(centerX(i), h * 0.78),
+        puffR * 0.78,
+        shadowPaint,
+      );
     }
 
     // 4. Mid-tone highlight (upper half).
     final midPaint = Paint()..color = mid;
     for (var i = 0; i < puffCount; i++) {
-      final cx = (i + 0.5) * cellW;
       canvas.drawCircle(
-        Offset(cx - 0.8, h * 0.32),
+        Offset(centerX(i) - 0.8, h * 0.32),
         puffR * 0.62,
         midPaint,
       );
@@ -244,9 +256,8 @@ class Platform extends PositionComponent {
     // 5. Bright crown ("kiss of light") on the very top of each puff.
     final crownPaint = Paint()..color = highlight;
     for (var i = 0; i < puffCount; i++) {
-      final cx = (i + 0.5) * cellW;
       canvas.drawCircle(
-        Offset(cx - 1.4, h * 0.14),
+        Offset(centerX(i) - 1.4, h * 0.14),
         puffR * 0.34,
         crownPaint,
       );

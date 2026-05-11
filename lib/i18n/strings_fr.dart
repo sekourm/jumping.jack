@@ -69,6 +69,33 @@ class StringsFr implements Strings {
   String get back => 'RETOUR';
   @override
   String get dontShowAgain => "T'inquiète j'ai capté";
+  @override
+  String tutorialCoaching(int done, int target) =>
+      'Saute sur $target plateformes  ·  $done/$target';
+  @override
+  String get tutorialRequiredForBr =>
+      'Termine le tutoriel solo pour débloquer le Battle Royale';
+  @override
+  List<String> get tutorialIntroBubbles => const [
+        "Salut, moi c'est Jack !",
+        'Maintiens ton doigt pour charger ton saut.',
+        'Vise dans la direction, puis relâche pour t\'envoler.',
+        'Atterris sur 3 plateformes pour finir le tuto.',
+      ];
+  @override
+  String get tutorialTapToContinue => 'Touche pour continuer';
+  @override
+  String get tutorialOutroBubble =>
+      "Bien joué ! Place aux choses sérieuses…";
+  @override
+  String get tutorialTapToStart => 'Touche pour commencer';
+  @override
+  String get helpTitle => 'AIDE';
+  @override
+  String get helpReplayTutorial => 'Rejouer le tutoriel';
+  @override
+  String get helpReplayTutorialDesc =>
+      'Relance la séquence d\'apprentissage avec Jack au prochain solo.';
 
   // Death overlay
   @override

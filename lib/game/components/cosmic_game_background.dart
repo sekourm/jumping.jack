@@ -4,13 +4,15 @@ import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/game_progress.dart';
+import '../jumping_jack_game.dart';
 
 /// Procedural cosmic backdrop. Static (no per-frame motion to avoid the
 /// "reading in a car" effect) — only the stage colour smoothly interpolates
 /// when the player crosses a stage threshold. Visual language matches the
 /// Fortnite-toon platforms: cell-shaded cloud silhouettes in the distance,
 /// dot stars + cross sparkles, and a 3-stop vertical sky gradient.
-class CosmicGameBackground extends PositionComponent with HasGameReference {
+class CosmicGameBackground extends PositionComponent
+    with HasGameReference<JumpingJackGame> {
   CosmicGameBackground() : super(priority: -1000);
 
   static const int _starCount = 130;
@@ -56,6 +58,12 @@ class CosmicGameBackground extends PositionComponent with HasGameReference {
   @override
   void update(double dt) {
     super.update(dt);
+    // Tutorial coaching: keep the backdrop frozen on the stage the
+    // player saw on the very first frame. The 3-jump coaching window
+    // is short but enough for `_stageFloat` to lerp visibly toward
+    // the "moon" stage, which is a distracting backdrop change for a
+    // brand-new user trying to learn the mechanics.
+    if (game.tutorialCoachingActive) return;
     final target = _stageIndexFor(GameProgress.platforms.value).toDouble();
     final diff = target - _stageFloat;
     _stageFloat += diff * 1.4 * dt;

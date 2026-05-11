@@ -39,6 +39,35 @@ abstract class Strings {
   String get next;
   String get back;
   String get dontShowAgain;
+  /// Coaching prompt shown after the user dismisses the explanatory
+  /// tutorial slides. Should communicate "land [target] platforms to
+  /// finish the tutorial — N/[target] done so far".
+  String tutorialCoaching(int done, int target);
+  /// Snackbar shown when the user taps the Battle Royale button before
+  /// completing the tutorial.
+  String get tutorialRequiredForBr;
+  /// Sequence of speech-bubble lines spoken by Jack during the intro
+  /// phase of the tutorial — one per tap. Implementations should keep
+  /// the list ordered (greeting → hold → aim → release → goal) and
+  /// short enough to fit a single line on a phone in portrait.
+  List<String> get tutorialIntroBubbles;
+  /// "Tap to continue" hint shown under the speech bubble.
+  String get tutorialTapToContinue;
+  /// Celebration line shown after the player nails both coaching jumps,
+  /// right before the game restarts on the 3-2-1 countdown. Should
+  /// feel like a personal hand-off from Jack: praise + "let's do this
+  /// for real now".
+  String get tutorialOutroBubble;
+  /// Hint shown under the outro bubble — tells the player they have
+  /// to tap to launch the real run. Mirrors [tutorialTapToContinue]
+  /// in vocabulary but reads as a definitive "go" rather than "next".
+  String get tutorialTapToStart;
+  /// Title of the help dialog opened from the home screen's "?" icon.
+  String get helpTitle;
+  /// Label of the "replay the tutorial" CTA inside the help dialog.
+  String get helpReplayTutorial;
+  /// Subtitle / context line under the replay-tutorial CTA.
+  String get helpReplayTutorialDesc;
 
   // ---- Solo death overlay ----
   String get gameOver;

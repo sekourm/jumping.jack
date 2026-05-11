@@ -11,12 +11,22 @@ import '../overlays/hud_overlay.dart';
 import '../overlays/tutorial_overlay.dart';
 
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key, this.isBattleRoyale = false});
+  const GameScreen({
+    super.key,
+    this.isBattleRoyale = false,
+    this.tutorialReplay = false,
+  });
 
   /// True when the game runs inside a Battle Royale match. Disables the
   /// tutorial overlay, swaps in the BR HUD + result screens, and lets the
   /// game itself broadcast score / death events to the BR service.
   final bool isBattleRoyale;
+
+  /// True when the screen was opened from the home help dialog "Rejouer
+  /// le tutoriel" entry. The tutorial overlay reads this from the game
+  /// instance and pops back to the home (instead of starting a real
+  /// run) after the player completes the tutorial outro.
+  final bool tutorialReplay;
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -33,6 +43,7 @@ class _GameScreenState extends State<GameScreen> {
     _game = JumpingJackGame(
       gameState: _gameState,
       isBattleRoyale: widget.isBattleRoyale,
+      tutorialReplay: widget.tutorialReplay,
     );
   }
 
@@ -56,6 +67,12 @@ class _GameScreenState extends State<GameScreen> {
       body: GameWidget<JumpingJackGame>(
         game: _game,
         overlayBuilderMap: {
+          // BR safe-zone vignette lives in its own overlay so it sits
+          // BENEATH the regular HUD (combo badge, score) in z-order. If
+          // we draw it inside BrHudOverlay it ends up above HudOverlay
+          // and green-tints every HUD widget while the safety window
+          // is up.
+          if (isBr) 'br_vignette': (_, game) => BrVignetteOverlay(game: game),
           'hud': (_, game) => HudOverlay(game: game),
           'tutorial': (_, game) => TutorialOverlay(game: game),
           'death': (_, game) => DeathOverlay(game: game),
@@ -63,6 +80,7 @@ class _GameScreenState extends State<GameScreen> {
           if (isBr) 'br_result': (_, game) => BrResultOverlay(game: game),
         },
         initialActiveOverlays: [
+          if (isBr) 'br_vignette',
           'hud',
           if (!isBr) 'tutorial',
           if (!isBr) 'death',

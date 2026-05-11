@@ -36,6 +36,12 @@ dependencies:
   cupertino_icons: ^1.0.8
   flame: ^1.37.0
   flame_audio: ^2.12.1
+  # flutter_soloud is used exclusively for SFX (one-shot sounds): it uses
+  # MiniAudio under the hood, giving near-zero playback latency on iOS —
+  # critical for a fast-paced game where AVPlayer-based audioplayers feels
+  # 100-200 ms behind the action. Music and ambient loops stay on
+  # audioplayers because they need cross-fading / volume ramps.
+  flutter_soloud: ^3.1.0
   google_fonts: ^6.2.1
   shared_preferences: ^2.3.3
   supabase_flutter: ^2.8.0

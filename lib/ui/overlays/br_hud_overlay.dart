@@ -62,24 +62,18 @@ class _BrHudOverlayState extends State<BrHudOverlay>
             : 0.0;
         return Stack(
           children: [
+            // NOTE: the safe-zone vignette lives in its own Flame overlay
+            // ([BrVignetteOverlay]), registered BEFORE 'hud' in
+            // game_screen.dart so it sits beneath every UI element (combo
+            // badge, score, event feed). Drawing it from inside this
+            // overlay would tint the HUD elements that are rendered by
+            // overlays positioned lower in the Flame stack.
             // ------------------ Persistent HUD ------------------
             SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(8),
                 child: Stack(
                   children: [
-                    // Safe-zone vignette is in the BACK so it never tints
-                    // the event feed / leaderboard text on top.
-                    if (game.brInvincibilityActive)
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: _BrSafeVignette(
-                            progress: 1.0 -
-                                (game.brInvincibilityRemaining /
-                                    JumpingJackGame.brInvincibilityDuration),
-                          ),
-                        ),
-                      ),
                     // Top-left: contextual badges only (spectator + safe
                     // window). The event feed moved to the top-right slot.
                     if (svc.spectator || game.brInvincibilityActive)
@@ -739,6 +733,58 @@ class _BrSafeBadge extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Dedicated Flame overlay for the BR safe-zone vignette.
+///
+/// Registered BEFORE 'hud' in [GameScreen] so the green frame is drawn at
+/// the bottom of the overlay stack — beneath the combo badge, the kill
+/// feed, the spectator badge, and every other HUD element. Drawing it
+/// from inside [BrHudOverlay] would put it ABOVE [HudOverlay] (which
+/// owns the combo badge) and tint that badge whenever the safety window
+/// is active.
+///
+/// Uses its own Ticker so the vignette intensity animates smoothly as
+/// the safety window expires, regardless of when the BR service emits
+/// notifications.
+class BrVignetteOverlay extends StatefulWidget {
+  const BrVignetteOverlay({super.key, required this.game});
+
+  final JumpingJackGame game;
+
+  @override
+  State<BrVignetteOverlay> createState() => _BrVignetteOverlayState();
+}
+
+class _BrVignetteOverlayState extends State<BrVignetteOverlay>
+    with SingleTickerProviderStateMixin {
+  late final Ticker _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = createTicker((_) {
+      if (mounted) setState(() {});
+    })..start();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.game.brInvincibilityActive) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: _BrSafeVignette(
+        progress: 1.0 -
+            (widget.game.brInvincibilityRemaining /
+                JumpingJackGame.brInvincibilityDuration),
       ),
     );
   }

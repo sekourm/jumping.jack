@@ -48,79 +48,93 @@ class _HudOverlayState extends State<HudOverlay>
       builder: (context, _) {
         final state = game.gameState;
         if (state.status != GameStatus.playing) return const SizedBox.shrink();
-        return SafeArea(
-          child: Stack(
-            children: [
-              // Solo: dot-matrix score at the top. BR: the score is hidden
-              // and replaced by the kill / event feed (rendered in the BR
-              // HUD overlay), so the player tracks the room story instead
-              // of a raw number.
-              if (!game.isBattleRoyale)
-                Positioned(
-                  top: 8,
-                  left: 16,
-                  right: 16,
-                  child: Center(
-                    child: ParticleScore(
-                      score: state.score,
-                      dotSize: 6,
-                      digitGap: 6,
-                      captionFontSize: 10,
-                      captionLetterSpacing: 2.5,
-                    ),
-                  ),
-                ),
-              if (state.comboCount >= GameConfig.comboMinDisplay)
-                Positioned(
-                  // BR has no score row at the top, so the combo slides up
-                  // to the very edge and reads as a primary stat. Solo
-                  // keeps its previous offset that clears the dot-matrix
-                  // score line.
-                  top: game.isBattleRoyale ? 12 : 90,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: _ComboBadge(
-                      count: state.comboCount,
-                      multiplier: state.comboMultiplier,
-                      timerFraction: (state.comboTimerRemaining /
-                              GameConfig.comboWindow)
-                          .clamp(0.0, 1.0),
-                      frozen: state.comboFrozen,
-                    ),
-                  ),
-                ),
-              if (state.timerActive)
-                Positioned(
-                  top: 90,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: Text(
-                      state.timerRemaining.toStringAsFixed(1),
-                      style: TextStyle(
-                        fontSize: 36,
-                        fontWeight: FontWeight.w800,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                        color: state.timerRemaining < GameConfig.timerWarnThreshold
-                            ? GameConfig.timerWarnColor
-                            : GameConfig.timerColor,
+        return Stack(
+          children: [
+            // Safe-area-constrained HUD widgets (score, combo, timer)
+            // stay inside SafeArea so the iPhone notch doesn't clip them.
+            SafeArea(
+              child: Stack(
+                children: [
+                  // Solo: dot-matrix score at the top. BR hides it in
+                  // favour of the kill / event feed (rendered in the BR
+                  // HUD overlay). Tutorial coaching also hides it — the
+                  // new player has no points to track yet and the
+                  // empty "0" would just look broken.
+                  if (!game.isBattleRoyale && !game.tutorialCoachingActive)
+                    Positioned(
+                      top: 8,
+                      left: 16,
+                      right: 16,
+                      child: Center(
+                        child: ParticleScore(
+                          score: state.score,
+                          dotSize: 6,
+                          digitGap: 6,
+                          captionFontSize: 10,
+                          captionLetterSpacing: 2.5,
+                        ),
                       ),
                     ),
-                  ),
-                ),
-              // Solo mode pre-game countdown ("PRÊT? 3 / 2 / 1 / GO"). BR
-              // ships its own countdown inside BrHudOverlay so don't
-              // double-render here. The engine is paused while the
-              // tutorial overlay is on top, so this stays frozen at "3"
-              // until the tutorial is dismissed — exactly the order the
-              // user asked for.
-              if (!game.isBattleRoyale && game.preGame)
-                Positioned.fill(
-                  child: _SoloCountdown(remaining: game.startCountdown),
-                ),
-            ],
-          ),
+                  if (state.comboCount >= GameConfig.comboMinDisplay &&
+                      !game.tutorialCoachingActive)
+                    Positioned(
+                      // BR has no score row at the top, so the combo
+                      // slides up to the very edge and reads as a
+                      // primary stat. Solo keeps its previous offset
+                      // that clears the dot-matrix score line.
+                      top: game.isBattleRoyale ? 12 : 90,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: _ComboBadge(
+                          count: state.comboCount,
+                          multiplier: state.comboMultiplier,
+                          timerFraction: (state.comboTimerRemaining /
+                                  GameConfig.comboWindow)
+                              .clamp(0.0, 1.0),
+                          frozen: state.comboFrozen,
+                        ),
+                      ),
+                    ),
+                  if (state.timerActive)
+                    Positioned(
+                      top: 90,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: Text(
+                          state.timerRemaining.toStringAsFixed(1),
+                          style: TextStyle(
+                            fontSize: 36,
+                            fontWeight: FontWeight.w800,
+                            fontFeatures: const [
+                              FontFeature.tabularFigures()
+                            ],
+                            color: state.timerRemaining <
+                                    GameConfig.timerWarnThreshold
+                                ? GameConfig.timerWarnColor
+                                : GameConfig.timerColor,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // Solo mode pre-game countdown ("PRÊT? 3 / 2 / 1 / GO"). Sits
+            // OUTSIDE the SafeArea so the dim + "3" reach the very edges
+            // of the iPhone screen (including the sliver around the
+            // notch), mirroring the BR countdown's edge-to-edge behaviour.
+            // BR ships its own countdown inside BrHudOverlay so don't
+            // double-render here. The engine is paused while the tutorial
+            // overlay is on top, so this stays frozen at "3" until the
+            // tutorial is dismissed — exactly the order the user asked
+            // for.
+            if (!game.isBattleRoyale && game.preGame)
+              Positioned.fill(
+                child: _SoloCountdown(remaining: game.startCountdown),
+              ),
+          ],
         );
       },
     );

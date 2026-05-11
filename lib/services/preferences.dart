@@ -25,7 +25,7 @@ class Preferences {
   static const _kBestScore = 'best_score';
   static const _kBrWins = 'br_wins';
   static const _kPlayerName = 'player_name';
-  static const _kShowTutorial = 'show_tutorial';
+  static const _kTutorialCompleted = 'tutorial_completed';
   static const _kPlayerId = 'player_id';
   static const _kRecoveryCode = 'recovery_code';
   static const _kLocale = 'locale';
@@ -34,9 +34,11 @@ class Preferences {
   static SharedPreferences? _prefs;
   static int _bestScore = 0;
   static int _brWins = 0;
-  // Tutorial shows on first solo run. Once dismissed via "Don't show
-  // again", it stays dismissed forever (no re-enable UI in this app).
-  static bool _showTutorial = true;
+  // Onboarding gate: the interactive tutorial overlay watches the
+  // solo game state and flips this to true once the player has landed
+  // two jumps. Until then the home screen keeps the Battle Royale
+  // entry dimmed and re-shows the coaching halo on every solo run.
+  static bool _tutorialCompleted = false;
   static String _playerId = '';
   static String _playerName = '';
   static String _recoveryCode = '';
@@ -56,7 +58,7 @@ class Preferences {
   ///      functional until the next online launch.
   static Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
-    _showTutorial = _prefs?.getBool(_kShowTutorial) ?? true;
+    _tutorialCompleted = _prefs?.getBool(_kTutorialCompleted) ?? false;
 
     final storedId = _prefs?.getString(_kPlayerId);
     if (storedId != null && storedId.isNotEmpty) {
@@ -266,10 +268,13 @@ class Preferences {
   /// Whether to show the onboarding tutorial when a new game starts.
   /// Reading hits the in-memory cache. Writing updates the cache and
   /// fire-and-forgets a write to disk so the choice survives reloads.
-  static bool get showTutorial => _showTutorial;
-  static set showTutorial(bool value) {
-    _showTutorial = value;
-    _prefs?.setBool(_kShowTutorial, value);
+  /// True once the player has landed two jumps in solo with the coaching
+  /// layer active. Gates the Battle Royale entry — see [_openBattleRoyale]
+  /// in [HomeScreen].
+  static bool get tutorialCompleted => _tutorialCompleted;
+  static set tutorialCompleted(bool value) {
+    _tutorialCompleted = value;
+    _prefs?.setBool(_kTutorialCompleted, value);
   }
 
   // ---- Battle Royale identity ----

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math';
 
 import 'package:flame_audio/flame_audio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_soloud/flutter_soloud.dart';
 
 /// Centralised audio engine for Jumping JACK.
 ///
@@ -31,19 +33,32 @@ class AudioManager {
 
   // All MP3 files under assets/audio/ that the engine references. Loaded
   // at boot via FlameAudio.audioCache so first plays don't stutter.
-  static const _allFiles = <String>[
-    // Music — `loop` is the shared in-game track (solo + BR). `menu_loop`
-    // is the lobby/menu loop. `win_fanfare` is the short victory sting.
-    'menu_loop.mp3', 'loop.mp3', 'win_fanfare.mp3',
+  /// Long-form audio that stays on the audioplayers backend (music
+  /// tracks + ambient loops). audioplayers handles seeking, crossfading
+  /// and volume ramps cleanly — features we depend on for these tracks.
+  static const _longFiles = <String>[
+    // Music
+    'menu_loop.mp3', 'loop.mp3',
+    // Ambient loops driven by [_ambientLoops] below.
+    'charge_loop.mp3', 'slow_time_active.mp3',
+    'danger_low_heartbeat.mp3', 'wind_ambient.mp3',
+  ];
+
+  /// One-shot SFX loaded into SoLoud. Anything that goes through [_play]
+  /// must appear here so the pool can resolve it at runtime.
+  static const _sfxFiles = <String>[
+    // Short victory sting used after a solo win — short enough that
+    // SoLoud handles it like any other SFX.
+    'win_fanfare.mp3',
     // UI
     'ui_click.mp3', 'ui_hover.mp3', 'ui_back.mp3', 'ui_confirm.mp3',
     'ui_toggle.mp3',
     // Player actions
-    'charge_loop.mp3', 'charge_max.mp3', 'jump_release.mp3',
+    'charge_max.mp3', 'jump_release.mp3',
     'land_soft.mp3', 'land_hard.mp3', 'bouncy_boing.mp3',
     'wall_bounce.mp3', 'fall_swoosh.mp3',
     // Pickups
-    'pickup_star.mp3', 'pickup_crystal.mp3', 'slow_time_active.mp3',
+    'pickup_star.mp3', 'pickup_crystal.mp3',
     'slow_time_end.mp3', 'pickup_heart.mp3', 'pickup_vision.mp3',
     'pickup_warp.mp3', 'teleport_arrive.mp3',
     // Combo & rewards
@@ -53,8 +68,7 @@ class AudioManager {
     'comeback_reward.mp3', 'wall_rebond_reward.mp3', 'score_milestone.mp3',
     'new_best_score.mp3',
     // Tension & danger
-    'danger_low_heartbeat.mp3', 'platform_crack.mp3',
-    'platform_explode.mp3', 'wind_ambient.mp3',
+    'platform_crack.mp3', 'platform_explode.mp3',
     // Death & game over
     'death_fall.mp3', 'death_crushed.mp3', 'gameover_jingle.mp3',
     'revive_ready.mp3',
@@ -64,7 +78,8 @@ class AudioManager {
     'kill_confirmed.mp3', 'kill_streak.mp3', 'got_crushed.mp3',
     'opponent_died.mp3', 'safe_zone_end.mp3',
     'leader_changed.mp3', 'victory_win.mp3', 'defeat_placement.mp3',
-    // Ambient
+    // Ambient (one-shot variety — the looping ambient loops above are
+    // separate).
     'cube_idle_blip.mp3', 'pickup_spawn_chime.mp3',
   ];
 
@@ -99,16 +114,42 @@ class AudioManager {
     if (_preloaded) return;
     _preloaded = true;
 
-    try {
-      await FlameAudio.audioCache.loadAll(_allFiles);
-    } catch (e) {
-      debugPrint('[Audio] SFX preload failed: $e');
+    // Order matters per platform:
+    //
+    //   • iOS  — SoLoud first, then audioplayers. miniaudio (SoLoud's
+    //     backend) sets the AVAudioSession category to `PlayAndRecord`
+    //     during its init; PlayAndRecord adds input-routing latency
+    //     that crackles over Bluetooth (AirPods). We override the
+    //     session back to `ambient` via audioplayers right after so
+    //     the recording mode is gone before any sound plays.
+    //
+    //   • Web / Android / desktop — audioplayers first. On web the
+    //     SoLoud module is loaded asynchronously by a separate script
+    //     tag and `_engine.isInitialized` reads a property that won't
+    //     exist until the wasm has finished loading. Running the
+    //     audioplayers setup + long-form preload first gives the
+    //     module time to land before we touch SoLoud, otherwise we
+    //     hit "Cannot read properties of undefined (reading
+    //     '_isInited')" in the JS console.
+    final iosFirst = !kIsWeb && Platform.isIOS;
+    if (iosFirst) {
+      await _SfxPool.initialize();
+      await _configureAudioSession();
+    } else {
+      await _configureAudioSession();
     }
 
-    // Build the bounded SFX pool *after* the cache is warm so each
-    // pooled player resolves its sources from preloaded bytes (no
-    // first-play decode stutter).
-    await _SfxPool.initialize();
+    // Music + ambient loops stay on audioplayers (they need crossfade /
+    // volume ramps), so we keep them warm in the FlameAudio cache.
+    try {
+      await FlameAudio.audioCache.loadAll(_longFiles);
+    } catch (e) {
+      debugPrint('[Audio] long-form preload failed: $e');
+    }
+
+    if (!iosFirst) {
+      await _SfxPool.initialize();
+    }
 
     // Music tracks — one player per track (crossfading needs them alive
     // in parallel).
@@ -120,6 +161,34 @@ class AudioManager {
     for (final entry in _ambientLoops.entries) {
       await _prepareLongPlayer(entry.value, 'audio/${entry.key}.mp3',
           loop: true);
+    }
+  }
+
+  /// Forces the iOS AVAudioSession into `ambient` mode, overriding the
+  /// `PlayAndRecord` default that SoLoud's miniaudio backend installs
+  /// during init. PlayAndRecord adds input-routing latency that crackles
+  /// over Bluetooth (AirPods specifically); `ambient` is the lowest-
+  /// latency, mix-with-others category appropriate for a casual game.
+  ///
+  /// Android keeps the regular game-audio config; web is a no-op for
+  /// audioplayers' iOS section but the Android block still applies as
+  /// a fallback on hybrid web wrappers.
+  static Future<void> _configureAudioSession() async {
+    try {
+      await AudioPlayer.global.setAudioContext(AudioContext(
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.ambient,
+        ),
+        android: AudioContextAndroid(
+          isSpeakerphoneOn: false,
+          stayAwake: false,
+          contentType: AndroidContentType.sonification,
+          usageType: AndroidUsageType.game,
+          audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+        ),
+      ));
+    } catch (e) {
+      debugPrint('[Audio] AudioContext setup failed: $e');
     }
   }
 
@@ -152,7 +221,7 @@ class AudioManager {
   // applies on top of these.
   // Menu base stays at the previous reference level (0.45). The
   // in-game `loop` is pre-attenuated by [_nonMenuAttenuation] so its
-  // effective volume is 0.42 × 0.8 = 0.336.
+  // effective volume is 0.42 × 0.4 = 0.168.
   static const Map<String, double> _trackBaseVolume = {
     'menu_loop': 0.45,
     'loop': 0.42 * _nonMenuAttenuation,
@@ -749,51 +818,92 @@ class _AmbientHandle {
 ///
 /// Players use [ReleaseMode.stop] so they stay alive after a sound
 /// finishes; otherwise they'd be released and the slot would shrink.
+/// SoLoud-backed SFX pool.
+///
+/// Why not the previous audioplayers round-robin pool: audioplayers uses
+/// `AVPlayer` on iOS (built for video) and re-creates an `AVPlayerItem`
+/// on every play, costing 100-200 ms per SFX. In dense gameplay (a jump,
+/// a combo tick and a land firing within ~100 ms) the delay piles up and
+/// SFX visibly trail the action.
+///
+/// SoLoud wraps MiniAudio: assets are decoded once into an `AudioSource`,
+/// then `play()` queues the playback on the mixer with sub-frame latency.
+/// We preload every entry of [AudioManager._sfxFiles] at boot, then just
+/// dispatch to the cached source.
 class _SfxPool {
-  static const int _size = 12;
-  static final List<AudioPlayer> _players = [];
-  static int _next = 0;
+  static final SoLoud _engine = SoLoud.instance;
+  static final Map<String, AudioSource> _sources = {};
   static bool _ready = false;
 
   static Future<void> initialize() async {
     if (_ready) return;
-    for (var i = 0; i < _size; i++) {
-      final p = AudioPlayer()..audioCache = FlameAudio.audioCache;
+    try {
+      if (!_engine.isInitialized) {
+        // iOS-only override: the hardware is natively 48 kHz, so SoLoud's
+        // 44.1 kHz default forces a sample-rate conversion every frame
+        // and produces audible crackling on the iPhone speaker. An 8192-
+        // sample buffer (~170 ms) was tuned for AirPods / Bluetooth: at
+        // 4096 (~85 ms) the buffer occasionally underran when BT
+        // congestion stretched the round-trip past the buffer window,
+        // producing intermittent crackling in earbuds. The added latency
+        // is barely perceptible for a casual game.
+        //
+        // Web + Android + macOS keep the defaults, which were already
+        // working cleanly — the conversion logic differs per backend
+        // (Web Audio API, AAudio, CoreAudio) and forcing iOS values on
+        // them reintroduces conversion overhead where there was none.
+        if (!kIsWeb && Platform.isIOS) {
+          await _engine.init(sampleRate: 48000, bufferSize: 8192);
+        } else {
+          await _engine.init();
+        }
+      }
+      // 16 concurrent voices is plenty for our densest scenes (a combo
+      // chain, a landing and a pickup can all fire in the same frame).
+      // SoLoud evicts the oldest voice past the limit, so a tighter cap
+      // never produces silence — only voice stealing.
+      _engine.setMaxActiveVoiceCount(16);
+    } catch (e) {
+      debugPrint('[Audio] SoLoud init failed: $e');
+      return;
+    }
+
+    for (final file in AudioManager._sfxFiles) {
       try {
-        await p.setReleaseMode(ReleaseMode.stop);
-      } catch (_) {}
-      _players.add(p);
+        _sources[file] =
+            await _engine.loadAsset('assets/audio/$file');
+      } catch (e) {
+        debugPrint('[Audio] SoLoud load $file failed: $e');
+      }
     }
     _ready = true;
   }
 
-  /// Plays [asset] (filename only — the player's audioCache prepends
-  /// its `assets/audio/` prefix) on the next pool slot. [volume] and
-  /// [rate] are applied per-playback. Failures are logged but never
-  /// thrown — game logic stays unaffected by audio hiccups.
+  /// Plays [asset] through the SoLoud mixer. [volume] is applied on the
+  /// new voice; [rate] adjusts playback speed (and therefore pitch —
+  /// matches the previous audioplayers semantics so the call sites keep
+  /// working unchanged). Failures are swallowed: a missing SFX must not
+  /// break gameplay.
   static void play(String asset, double volume, {double rate = 1.0}) {
-    if (!_ready || _players.isEmpty) return;
-    final p = _players[_next];
-    _next = (_next + 1) % _size;
+    if (!_ready) return;
+    final source = _sources[asset];
+    if (source == null) return;
+    unawaited(_playAsync(source, asset, volume, rate));
+  }
+
+  static Future<void> _playAsync(
+    AudioSource source,
+    String asset,
+    double volume,
+    double rate,
+  ) async {
     try {
-      // The player's `audioCache` is `FlameAudio.audioCache` which
-      // already has `prefix: 'assets/audio/'` configured. So we pass
-      // the bare filename here — passing `audio/$asset` would resolve
-      // to `assets/audio/audio/$asset` and silently fail on web.
-      //
-      // `play(source, volume:)` resets the player to the given source
-      // from the beginning regardless of its prior state — the
-      // canonical "play from scratch" path on audioplayers, far more
-      // reliable than stop() → seek() → resume() which intermittently
-      // failed on web after a previous stop().
-      p.play(AssetSource(asset), volume: volume);
+      final handle = await _engine.play(source, volume: volume);
       if (rate != 1.0) {
-        // Fire-and-forget — the rate applies on the next render tick,
-        // imperceptibly close to the play start.
-        p.setPlaybackRate(rate);
+        _engine.setRelativePlaySpeed(handle, rate);
       }
     } catch (e) {
-      debugPrint('[Audio] pool play $asset failed: $e');
+      debugPrint('[Audio] SoLoud play $asset failed: $e');
     }
   }
 }
