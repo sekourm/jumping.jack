@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:math';
+import 'dart:math' as math;
+import 'dart:math' show Random;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -29,7 +30,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen>
-    with WidgetsBindingObserver {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   // Picked once per HomeScreen mount → on every relaunch / return-to-menu the
   // background world is randomized.
   late final JackStage _stage;
@@ -42,6 +43,23 @@ class _HomeScreenState extends State<HomeScreen>
   bool _brLockedBubbleVisible = false;
   Timer? _brLockedBubbleTimer;
 
+  // Intro animation — runs once on cold start. The mascot does two jumps
+  // (squash → stretch → airborne arc → impact squash) with a ground shadow
+  // that shrinks while it's airborne, then the rest of the UI (chips,
+  // logo, pseudo, buttons) fades and slides in.
+  // The cosmic background is drawn from frame 0 — the native launch
+  // screen is a flat dark colour close to all stage gradients' bottom
+  // band so the hand-off doesn't flash.
+  // Only the first mount plays the intro; returning from a game pops
+  // straight to the static home.
+  static bool _introPlayed = false;
+  static const int _introMs = 1600;
+  late final AnimationController _introCtrl;
+  late final Animation<double> _topFade;
+  late final Animation<double> _logoFade;
+  late final Animation<double> _bottomFade;
+  late final Animation<Offset> _bottomSlide;
+
   @override
   void initState() {
     super.initState();
@@ -50,10 +68,41 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.addObserver(this);
     I18n.instance.addListener(_onLocaleChanged);
     AudioManager.preload().then((_) => AudioManager.startMenuMusic());
+    _introCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: _introMs),
+      value: _introPlayed ? 1.0 : 0.0,
+    );
+    _topFade = CurvedAnimation(
+      parent: _introCtrl,
+      curve: const Interval(0.50, 0.72, curve: Curves.easeOut),
+    );
+    _logoFade = CurvedAnimation(
+      parent: _introCtrl,
+      curve: const Interval(0.60, 0.85, curve: Curves.easeOut),
+    );
+    _bottomFade = CurvedAnimation(
+      parent: _introCtrl,
+      curve: const Interval(0.72, 1.0, curve: Curves.easeOut),
+    );
+    _bottomSlide = Tween<Offset>(
+      begin: const Offset(0, 0.22),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _introCtrl,
+      curve: const Interval(0.72, 1.0, curve: Curves.easeOutCubic),
+    ));
+    if (!_introPlayed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _introCtrl.forward().whenComplete(() => _introPlayed = true);
+      });
+    }
   }
 
   @override
   void dispose() {
+    _introCtrl.dispose();
     _brLockedBubbleTimer?.cancel();
     I18n.instance.removeListener(_onLocaleChanged);
     WidgetsBinding.instance.removeObserver(this);
@@ -91,7 +140,9 @@ class _HomeScreenState extends State<HomeScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
+                  FadeTransition(
+                    opacity: _topFade,
+                    child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Row(
@@ -143,30 +194,37 @@ class _HomeScreenState extends State<HomeScreen>
                       ),
                     ],
                   ),
+                  ),
                   Expanded(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const JackMascot(
-                          size: 84,
-                          face: MascotFace.smile,
-                          idleAnimated: true,
-                        ),
+                        _JumpingMascot(intro: _introCtrl),
                         const SizedBox(height: 14),
-                        const JackLogo(),
+                        FadeTransition(
+                          opacity: _logoFade,
+                          child: const JackLogo(),
+                        ),
                       ],
                     ),
                   ),
                   // Pseudo chip sits just above the action buttons — same
                   // visual stack as the death / BR result overlays where
                   // the player identity reads right next to the CTA row.
-                  Center(
-                    child: _PseudoChip(onChanged: () => setState(() {})),
-                  ),
-                  const SizedBox(height: 14),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-                    child: Row(
+                  FadeTransition(
+                    opacity: _bottomFade,
+                    child: SlideTransition(
+                      position: _bottomSlide,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Center(
+                            child: _PseudoChip(onChanged: () => setState(() {})),
+                          ),
+                          const SizedBox(height: 14),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+                            child: Row(
                       // Solo (primary yellow) on the left, BR (epic purple)
                       // on the right — same vocabulary as the death / BR
                       // result overlays so all three "where do I go next"
@@ -206,6 +264,10 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -1414,4 +1476,140 @@ class _HelpEntry extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Cold-start intro for the home mascot: two squash-and-stretch jumps with
+/// a ground shadow that shrinks while the cube is airborne. Once the
+/// [intro] controller finishes the widget settles into the regular
+/// [JackMascot] (with its idle wink) — no further animation.
+class _JumpingMascot extends StatelessWidget {
+  const _JumpingMascot({required this.intro});
+
+  final Animation<double> intro;
+
+  static const double _mascotSize = 84;
+  // Reserved vertical slot has to fit the higher second jump (~110 px
+  // peak) plus the shadow + headroom, otherwise the cube clips against
+  // the top of the SizedBox during the airborne arc.
+  static const double _slotHeight = _mascotSize + 130;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _mascotSize + 40,
+      height: _slotHeight,
+      child: AnimatedBuilder(
+        animation: intro,
+        builder: (context, _) {
+          final pose = _poseFor(intro.value);
+          return Stack(
+            alignment: Alignment.bottomCenter,
+            children: [
+              Positioned(
+                bottom: 4,
+                child: Opacity(
+                  opacity: pose.shadowAlpha,
+                  child: Container(
+                    width: 60 * pose.shadowScale,
+                    height: 8 * pose.shadowScale,
+                    decoration: const BoxDecoration(
+                      color: Color(0x66000000),
+                      borderRadius: BorderRadius.all(Radius.elliptical(30, 4)),
+                    ),
+                  ),
+                ),
+              ),
+              // Scale anchored at bottomCenter so the squash visibly
+              // compresses against the ground rather than around the
+              // cube's centroid (which would look like a balloon).
+              Positioned(
+                bottom: 10,
+                child: Transform.translate(
+                  offset: Offset(0, pose.dy),
+                  child: Transform(
+                    alignment: Alignment.bottomCenter,
+                    transform: Matrix4.diagonal3Values(pose.sx, pose.sy, 1),
+                    child: const JackMascot(
+                      size: _mascotSize,
+                      face: MascotFace.smile,
+                      idleAnimated: true,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // Maps 0..1 intro progress to one of three phases:
+  //   0.00 → 0.31 : jump 1 (lower, 70 px peak)
+  //   0.31 → 0.69 : jump 2 (higher, 110 px peak)
+  //   0.69 → 1.00 : settled (resting pose, UI fades in around it)
+  // Each jump runs the same crouch / push / airborne / impact / recover
+  // envelope so the squash reads as deliberate weight rather than a
+  // rubber-band rebound.
+  static _MascotPose _poseFor(double t) {
+    if (t < 0.31) return _jumpPose(t / 0.31, 70);
+    if (t < 0.69) return _jumpPose((t - 0.31) / 0.38, 110);
+    return const _MascotPose(0, 1, 1, 1, 1);
+  }
+
+  static _MascotPose _jumpPose(double p, double height) {
+    p = p.clamp(0.0, 1.0);
+    double dy = 0, sx = 1, sy = 1;
+    if (p < 0.10) {
+      // Crouch — preload before the push.
+      final k = p / 0.10;
+      sy = 1.0 - 0.30 * k;
+      sx = 1.0 + 0.25 * k;
+    } else if (p < 0.20) {
+      // Push off — back to neutral then stretch upward.
+      final k = (p - 0.10) / 0.10;
+      sy = 0.70 + 0.50 * k;
+      sx = 1.25 - 0.30 * k;
+      dy = -k * height * 0.10;
+    } else if (p < 0.80) {
+      // Airborne — sine arc with slight vertical stretch.
+      final k = (p - 0.20) / 0.60;
+      dy = -math.sin(k * math.pi) * height - height * 0.10 * (1 - k);
+      sy = 1.06;
+      sx = 0.95;
+    } else if (p < 0.90) {
+      // Impact — hard squash on landing.
+      final k = (p - 0.80) / 0.10;
+      sy = 1.06 - 0.46 * k;
+      sx = 0.95 + 0.35 * k;
+    } else {
+      // Recover — back to neutral resting pose.
+      final k = (p - 0.90) / 0.10;
+      sy = 0.60 + 0.40 * k;
+      sx = 1.30 - 0.30 * k;
+    }
+    final airborne = (-dy / height).clamp(0.0, 1.0);
+    return _MascotPose(
+      dy,
+      sx,
+      sy,
+      1.0 - 0.55 * airborne,
+      1.0 - 0.55 * airborne,
+    );
+  }
+}
+
+class _MascotPose {
+  const _MascotPose(
+    this.dy,
+    this.sx,
+    this.sy,
+    this.shadowScale,
+    this.shadowAlpha,
+  );
+  final double dy;
+  final double sx;
+  final double sy;
+  final double shadowScale;
+  final double shadowAlpha;
 }
