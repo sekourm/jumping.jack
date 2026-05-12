@@ -53,7 +53,7 @@ class _HomeScreenState extends State<HomeScreen>
   // Only the first mount plays the intro; returning from a game pops
   // straight to the static home.
   static bool _introPlayed = false;
-  static const int _introMs = 1600;
+  static const int _introMs = 1500;
   late final AnimationController _introCtrl;
   late final Animation<double> _topFade;
   late final Animation<double> _logoFade;
@@ -73,24 +73,27 @@ class _HomeScreenState extends State<HomeScreen>
       duration: const Duration(milliseconds: _introMs),
       value: _introPlayed ? 1.0 : 0.0,
     );
+    // Jumps finish at t ≈ 0.53 of the controller (see _JumpingMascot).
+    // The chips fade in around the second jump's apex, the logo joins
+    // on the way down, and the buttons reveal after the final impact.
     _topFade = CurvedAnimation(
       parent: _introCtrl,
-      curve: const Interval(0.50, 0.72, curve: Curves.easeOut),
+      curve: const Interval(0.40, 0.62, curve: Curves.easeOut),
     );
     _logoFade = CurvedAnimation(
       parent: _introCtrl,
-      curve: const Interval(0.60, 0.85, curve: Curves.easeOut),
+      curve: const Interval(0.50, 0.75, curve: Curves.easeOut),
     );
     _bottomFade = CurvedAnimation(
       parent: _introCtrl,
-      curve: const Interval(0.72, 1.0, curve: Curves.easeOut),
+      curve: const Interval(0.62, 1.0, curve: Curves.easeOut),
     );
     _bottomSlide = Tween<Offset>(
       begin: const Offset(0, 0.22),
       end: Offset.zero,
     ).animate(CurvedAnimation(
       parent: _introCtrl,
-      curve: const Interval(0.72, 1.0, curve: Curves.easeOutCubic),
+      curve: const Interval(0.62, 1.0, curve: Curves.easeOutCubic),
     ));
     if (!_introPlayed) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1478,20 +1481,42 @@ class _HelpEntry extends StatelessWidget {
   }
 }
 
-/// Cold-start intro for the home mascot: two squash-and-stretch jumps with
-/// a ground shadow that shrinks while the cube is airborne. Once the
-/// [intro] controller finishes the widget settles into the regular
-/// [JackMascot] (with its idle wink) — no further animation.
+/// Cold-start intro for the home mascot: two squash-and-stretch jumps
+/// (low + high) with a ground-locked shadow that shrinks while the cube
+/// is airborne, then settles into the regular [JackMascot] (with its
+/// idle wink). The controller finishing leaves the widget in a clean
+/// resting pose — no extra animation while the user is on the home.
 class _JumpingMascot extends StatelessWidget {
   const _JumpingMascot({required this.intro});
 
   final Animation<double> intro;
 
   static const double _mascotSize = 84;
-  // Reserved vertical slot has to fit the higher second jump (~110 px
-  // peak) plus the shadow + headroom, otherwise the cube clips against
-  // the top of the SizedBox during the airborne arc.
+  // JackMascot's SVG body occupies y=14..106 inside a 120-unit viewport,
+  // so in an 84 px box the body's visible bottom sits at 84 * 106/120 =
+  // 74.2 px (≈ 9.8 px of empty space below it). The squash anchor and
+  // the ground shadow are both placed against this visible bottom so the
+  // cube reads as compressing against the floor rather than against an
+  // invisible point 10 px lower.
+  static const double _bodyBottomFrac = 106 / 120; // 0.883
+  // Alignment.y maps -1 (top) → 1 (bottom). 0.883 of the height in a
+  // top-anchored space = 2 * 0.883 - 1 = 0.766.
+  static const double _squashAnchorY = 2 * _bodyBottomFrac - 1;
+  // Headroom = highest peak + small safety. Second jump peaks at 110.
   static const double _slotHeight = _mascotSize + 130;
+
+  // Highest point each jump reaches (px above resting ground). The first
+  // jump is deliberately smaller to read as "preparing" before the
+  // second, weightier hop.
+  static const double _jump1Height = 60;
+  static const double _jump2Height = 100;
+
+  // Timeline (fraction of the intro controller, total 1500 ms):
+  //   0.000 → 0.233 : jump 1 (≈ 350 ms)
+  //   0.233 → 0.533 : jump 2 (≈ 450 ms)
+  //   0.533 → 1.000 : settled (UI fade-in zone)
+  static const double _jump1End = 0.233;
+  static const double _jump2End = 0.533;
 
   @override
   Widget build(BuildContext context) {
@@ -1502,33 +1527,51 @@ class _JumpingMascot extends StatelessWidget {
         animation: intro,
         builder: (context, _) {
           final pose = _poseFor(intro.value);
+          // Cube's mascot box bottom is placed so the body's visible
+          // bottom rests at `groundFromSlotBottom` (= 14 px from the
+          // slot bottom, matching the shadow line). 14 px chosen so the
+          // shadow has enough room below without clipping.
+          const groundFromSlotBottom = 14.0;
+          final boxBottom = groundFromSlotBottom -
+              _mascotSize * (1 - _bodyBottomFrac);
           return Stack(
             alignment: Alignment.bottomCenter,
+            clipBehavior: Clip.none,
             children: [
+              // Ground shadow — sits exactly on the cube's visible
+              // baseline, shrinks and fades while the cube is in the
+              // air, then fades out completely once we settle so the
+              // home screen doesn't keep a permanent oval on the floor.
               Positioned(
-                bottom: 4,
+                bottom: groundFromSlotBottom - 4,
                 child: Opacity(
                   opacity: pose.shadowAlpha,
                   child: Container(
-                    width: 60 * pose.shadowScale,
+                    width: 64 * pose.shadowScale,
                     height: 8 * pose.shadowScale,
-                    decoration: const BoxDecoration(
-                      color: Color(0x66000000),
-                      borderRadius: BorderRadius.all(Radius.elliptical(30, 4)),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      borderRadius:
+                          const BorderRadius.all(Radius.elliptical(32, 4)),
                     ),
                   ),
                 ),
               ),
-              // Scale anchored at bottomCenter so the squash visibly
-              // compresses against the ground rather than around the
-              // cube's centroid (which would look like a balloon).
+              // Cube — translate then squash. The squash is anchored on
+              // the body's visible bottom (not the SizedBox bottom) so
+              // the compression visibly meets the floor.
               Positioned(
-                bottom: 10,
+                bottom: boxBottom,
                 child: Transform.translate(
                   offset: Offset(0, pose.dy),
                   child: Transform(
-                    alignment: Alignment.bottomCenter,
+                    alignment: const Alignment(0, _squashAnchorY),
                     transform: Matrix4.diagonal3Values(pose.sx, pose.sy, 1),
+                    // Glow stays on but the cube's own internal drop
+                    // shadow follows it skyward — that's an attached
+                    // ambient shadow, not a ground shadow, so it reads
+                    // as "the cube has weight" without competing with
+                    // the floor shadow that's doing the lift narrative.
                     child: const JackMascot(
                       size: _mascotSize,
                       face: MascotFace.smile,
@@ -1544,58 +1587,75 @@ class _JumpingMascot extends StatelessWidget {
     );
   }
 
-  // Maps 0..1 intro progress to one of three phases:
-  //   0.00 → 0.31 : jump 1 (lower, 70 px peak)
-  //   0.31 → 0.69 : jump 2 (higher, 110 px peak)
-  //   0.69 → 1.00 : settled (resting pose, UI fades in around it)
-  // Each jump runs the same crouch / push / airborne / impact / recover
-  // envelope so the squash reads as deliberate weight rather than a
-  // rubber-band rebound.
+  /// Returns the mascot pose for a given controller fraction `t`.
   static _MascotPose _poseFor(double t) {
-    if (t < 0.31) return _jumpPose(t / 0.31, 70);
-    if (t < 0.69) return _jumpPose((t - 0.31) / 0.38, 110);
-    return const _MascotPose(0, 1, 1, 1, 1);
+    _MascotPose pose;
+    if (t < _jump1End) {
+      pose = _jumpPose(t / _jump1End, _jump1Height);
+    } else if (t < _jump2End) {
+      pose = _jumpPose((t - _jump1End) / (_jump2End - _jump1End),
+          _jump2Height);
+    } else {
+      pose = const _MascotPose(0, 1, 1, 1, 1);
+    }
+    // Once the jumps are done fade the ground shadow out over ~150 ms
+    // so the home screen doesn't end with a permanent dark oval under
+    // the mascot.
+    if (t > _jump2End) {
+      final fade =
+          ((t - _jump2End) / 0.10).clamp(0.0, 1.0);
+      pose = _MascotPose(
+        pose.dy,
+        pose.sx,
+        pose.sy,
+        pose.shadowScale,
+        pose.shadowAlpha * (1.0 - fade),
+      );
+    }
+    return pose;
   }
 
+  /// Single-jump envelope. `p ∈ [0, 1]` is the local progress through
+  /// one jump cycle. dy = 0 at both endpoints so jumps chain cleanly
+  /// without a vertical discontinuity at the boundary; squash and
+  /// stretch run through every phase smoothly.
+  ///
+  /// Phases (within one jump):
+  ///   0.00 → 0.12 : crouch  (sy 1.00 → 0.70, sx 1.00 → 1.25)
+  ///   0.12 → 0.20 : push    (sy 0.70 → 1.25, sx 1.25 → 0.92)
+  ///   0.20 → 0.82 : airborne (sine arc, sy 1.05, sx 0.95)
+  ///   0.82 → 0.90 : impact  (sy 1.05 → 0.62, sx 0.95 → 1.30)
+  ///   0.90 → 1.00 : recover (sy 0.62 → 1.00, sx 1.30 → 1.00)
   static _MascotPose _jumpPose(double p, double height) {
     p = p.clamp(0.0, 1.0);
     double dy = 0, sx = 1, sy = 1;
-    if (p < 0.10) {
-      // Crouch — preload before the push.
-      final k = p / 0.10;
-      sy = 1.0 - 0.30 * k;
-      sx = 1.0 + 0.25 * k;
+    if (p < 0.12) {
+      final k = p / 0.12;
+      sy = 1.00 - 0.30 * k;
+      sx = 1.00 + 0.25 * k;
     } else if (p < 0.20) {
-      // Push off — back to neutral then stretch upward.
-      final k = (p - 0.10) / 0.10;
-      sy = 0.70 + 0.50 * k;
-      sx = 1.25 - 0.30 * k;
-      dy = -k * height * 0.10;
-    } else if (p < 0.80) {
-      // Airborne — sine arc with slight vertical stretch.
-      final k = (p - 0.20) / 0.60;
-      dy = -math.sin(k * math.pi) * height - height * 0.10 * (1 - k);
-      sy = 1.06;
+      final k = (p - 0.12) / 0.08;
+      sy = 0.70 + 0.55 * k;
+      sx = 1.25 - 0.33 * k;
+    } else if (p < 0.82) {
+      final k = (p - 0.20) / 0.62;
+      dy = -math.sin(k * math.pi) * height;
+      sy = 1.05;
       sx = 0.95;
     } else if (p < 0.90) {
-      // Impact — hard squash on landing.
-      final k = (p - 0.80) / 0.10;
-      sy = 1.06 - 0.46 * k;
+      final k = (p - 0.82) / 0.08;
+      sy = 1.05 - 0.43 * k;
       sx = 0.95 + 0.35 * k;
     } else {
-      // Recover — back to neutral resting pose.
       final k = (p - 0.90) / 0.10;
-      sy = 0.60 + 0.40 * k;
+      sy = 0.62 + 0.38 * k;
       sx = 1.30 - 0.30 * k;
     }
+    // Ground shadow scales with how high the cube is — biggest when the
+    // cube is grounded, smallest (and faintest) at the apex.
     final airborne = (-dy / height).clamp(0.0, 1.0);
-    return _MascotPose(
-      dy,
-      sx,
-      sy,
-      1.0 - 0.55 * airborne,
-      1.0 - 0.55 * airborne,
-    );
+    final shadowK = 1.0 - 0.60 * airborne;
+    return _MascotPose(dy, sx, sy, shadowK, shadowK);
   }
 }
 
