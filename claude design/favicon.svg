@@ -1,10 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
     
-    <radialGradient id="bg" cx="0.5" cy="0.42" r="0.75">
-      <stop offset="0" stop-color="#4B2596"></stop>
-      <stop offset="0.45" stop-color="#1E0B4E"></stop>
-      <stop offset="1" stop-color="#070218"></stop>
+    <linearGradient id="bg" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#1E3A8A"></stop>
+      <stop offset="0.32" stop-color="#4B2596"></stop>
+      <stop offset="0.62" stop-color="#7E1A6B"></stop>
+      <stop offset="0.85" stop-color="#A8341A"></stop>
+      <stop offset="1" stop-color="#3A0D08"></stop>
+    </linearGradient>
+
+    <radialGradient id="bgGlow" cx="0.5" cy="0.42" r="0.7">
+      <stop offset="0" stop-color="rgba(255,255,255,0.18)"></stop>
+      <stop offset="0.5" stop-color="rgba(255,255,255,0)"></stop>
     </radialGradient>
 
     
@@ -66,6 +73,7 @@
 
   
   <rect width="1024" height="1024" rx="224" fill="url(#bg)"></rect>
+  <rect width="1024" height="1024" rx="224" fill="url(#bgGlow)"></rect>
 
   
   <g>
@@ -96,29 +104,22 @@
       
       <rect x="290" y="296" width="444" height="320" fill="url(#beam)"></rect>
 
-      
-      
+      <rect x="371" y="370" width="281" height="52" rx="26" fill="url(#topHi)" opacity="0.7"></rect>
+
       <rect x="290" y="540" width="444" height="200" fill="url(#botSh)"></rect>
 
-      
-      
-      <g fill="#1a1408">
-        <ellipse cx="426" cy="510" rx="24" ry="32"></ellipse>
-        <ellipse cx="598" cy="510" rx="24" ry="32"></ellipse>
-      </g>
-      
-      <g fill="#fff">
-        <circle cx="434" cy="498" r="8"></circle>
-        <circle cx="606" cy="498" r="8"></circle>
+      <g>
+        <ellipse cx="460" cy="518" rx="33" ry="41" fill="#ffffff"></ellipse>
+        <ellipse cx="564" cy="518" rx="33" ry="41" fill="#ffffff"></ellipse>
+        <circle cx="467" cy="525" r="15" fill="#1a1a1a"></circle>
+        <circle cx="571" cy="525" r="15" fill="#1a1a1a"></circle>
       </g>
 
-      
-      
-      <path d="M 452 612 Q 512 656 572 612" stroke="#1a1408" stroke-width="18" stroke-linecap="round" fill="none"></path>
+      <path d="M 457 592 Q 512 636 567 592" stroke="#7A4A00" stroke-width="15" stroke-linecap="round" fill="none"></path>
     </g>
 
     
-    <rect x="290" y="296" width="444" height="444" rx="100" fill="none" stroke="#5A3505" stroke-width="14"></rect>
+    <rect x="290" y="296" width="444" height="444" rx="100" fill="none" stroke="#7A4A00" stroke-width="18" stroke-linejoin="round"></rect>
 
     
     
