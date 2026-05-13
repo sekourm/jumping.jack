@@ -96,6 +96,57 @@ class StringsEn implements Strings {
   @override
   String get helpReplayTutorialDesc =>
       'Re-runs the learning sequence with Jack on your next solo run.';
+  @override
+  String get statsTitle => 'MY JACK';
+  @override
+  String get statsBestScore => 'Best score';
+  @override
+  String get statsBestScoreDesc =>
+      'Highest score reached in a solo run.';
+  @override
+  String get statsBrWins => 'Battle Royale wins';
+  @override
+  String get statsBrWinsDesc =>
+      'Number of Top 1 finishes in Battle Royale.';
+  @override
+  String get statsNoScore => 'No score yet';
+  @override
+  String get rankingTitle => 'RANKING';
+  @override
+  String get rankingTabBr => 'BATTLE ROYALE';
+  @override
+  String get rankingTabScore => 'SCORE';
+  @override
+  String get rankingComingSoon => 'Leaderboard coming soon';
+  @override
+  String get rankingTooltip => 'World ranking';
+  @override
+  String get nameErrorTaken => 'That name is already taken';
+  @override
+  String get nameErrorForbidden => 'That name is not allowed';
+  @override
+  String get nameErrorTooShort => 'Name too short (2 chars min.)';
+  @override
+  String get nameErrorEmpty => 'Name required';
+  @override
+  String get nameErrorGeneric => 'Error, try again';
+  @override
+  String get nameErrorRecoveryMismatch =>
+      'Profile locked on the cloud. Use your recovery code to restore '
+      'it, or reset to start over.';
+  @override
+  String get resetProfileLabel => 'Reset profile';
+  @override
+  String get resetProfileTitle => 'RESET PROFILE';
+  @override
+  String get resetProfileDesc =>
+      'Creates a new profile on this device. Your scores and BR '
+      'wins will be reset to zero. The old profile stays accessible '
+      'with its recovery code.';
+  @override
+  String get resetProfileCta => 'Reset';
+  @override
+  String get resetProfileSuccess => 'New profile created';
 
   // Death overlay
   @override

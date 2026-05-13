@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'dart:math' show Random;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../config/supabase_config.dart';
 import '../../i18n/i18n.dart';
@@ -33,7 +32,7 @@ class _HomeScreenState extends State<HomeScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   // Picked once per HomeScreen mount → on every relaunch / return-to-menu the
   // background world is randomized.
-  late final JackStage _stage;
+  late JackStage _stage;
   // GlobalKey on the BR button → lets us read its on-screen rect so the
   // tutorial-locked bubble can anchor right above it.
   final GlobalKey _brButtonKey = GlobalKey();
@@ -42,6 +41,16 @@ class _HomeScreenState extends State<HomeScreen>
   // after ~3 s or on tap anywhere.
   bool _brLockedBubbleVisible = false;
   Timer? _brLockedBubbleTimer;
+
+  // Easter egg: tapping the mascot 5 times in a row (no more than ~1.2 s
+  // between two taps, so the streak reads as a deliberate burst rather
+  // than ambient fidgeting) cycles the background to a fresh stage.
+  // [_jackTapCount] is the current streak; [_jackTapResetTimer] clears
+  // it when the gap between taps is too long.
+  int _jackTapCount = 0;
+  Timer? _jackTapResetTimer;
+  static const int _kEasterEggTaps = 5;
+  static const Duration _kEasterEggWindow = Duration(milliseconds: 1200);
 
   // Intro animation — runs once on cold start. The mascot does two jumps
   // (squash → stretch → airborne arc → impact squash) with a ground shadow
@@ -107,9 +116,41 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     _introCtrl.dispose();
     _brLockedBubbleTimer?.cancel();
+    _jackTapResetTimer?.cancel();
     I18n.instance.removeListener(_onLocaleChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  /// Counts a tap on the home mascot. After [_kEasterEggTaps] consecutive
+  /// taps (each within [_kEasterEggWindow] of the previous) the home
+  /// background swaps to a fresh stage and a short confirm SFX plays so
+  /// the user gets feedback that the secret combo landed.
+  void _onJackTapped() {
+    AudioManager.uiHover();
+    _jackTapCount++;
+    _jackTapResetTimer?.cancel();
+    if (_jackTapCount >= _kEasterEggTaps) {
+      _jackTapCount = 0;
+      _triggerBackgroundEasterEgg();
+      return;
+    }
+    _jackTapResetTimer = Timer(_kEasterEggWindow, () {
+      _jackTapCount = 0;
+    });
+  }
+
+  /// Swaps [_stage] to a different stage chosen at random from the full
+  /// catalogue (including `battle` and `dark`, normally excluded from the
+  /// home rotation). Plays a confirm SFX as a haptic-less "you found it"
+  /// cue. No-op if the random pick lands on the current stage — we keep
+  /// trying so the change is always visible.
+  void _triggerBackgroundEasterEgg() {
+    final all = JackStage.values.toList()..remove(_stage);
+    if (all.isEmpty) return;
+    final next = all[Random().nextInt(all.length)];
+    AudioManager.uiConfirm();
+    setState(() => _stage = next);
   }
 
   void _onLocaleChanged() {
@@ -151,21 +192,16 @@ class _HomeScreenState extends State<HomeScreen>
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          _StatChip(
-                            icoName: IcoName.trophy,
-                            label: 'SCORE',
-                            value: Preferences.bestScore > 0
-                                ? '${Preferences.bestScore}'
-                                : '—',
-                            accent: JackDesign.yellow,
+                          _RoundIconBtn(
+                            icoName: IcoName.mascot,
+                            onPressed: _openStats,
+                            tooltip: I18n.t.statsTitle,
                           ),
                           const SizedBox(width: 8),
-                          _StatChip(
-                            icoName: IcoName.flame,
-                            label: 'TOP 1',
-                            value: '${Preferences.brWins}',
-                            accent: JackDesign.purple,
-                            iconColor: JackDesign.purpleHi,
+                          _RoundIconBtn(
+                            icoName: IcoName.podium,
+                            onPressed: _openRanking,
+                            tooltip: I18n.t.rankingTooltip,
                           ),
                         ],
                       ),
@@ -202,7 +238,11 @@ class _HomeScreenState extends State<HomeScreen>
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _JumpingMascot(intro: _introCtrl),
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _onJackTapped,
+                          child: _JumpingMascot(intro: _introCtrl),
+                        ),
                         const SizedBox(height: 14),
                         FadeTransition(
                           opacity: _logoFade,
@@ -326,6 +366,24 @@ class _HomeScreenState extends State<HomeScreen>
         setState(() {});
       }
     });
+  }
+
+  Future<void> _openStats() async {
+    AudioManager.click();
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.75),
+      builder: (_) => const _StatsDialog(),
+    );
+  }
+
+  Future<void> _openRanking() async {
+    AudioManager.click();
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.75),
+      builder: (_) => const _RankingDialog(),
+    );
   }
 
   Future<void> _openHelp() async {
@@ -460,104 +518,180 @@ class _PseudoChip extends StatelessWidget {
   Future<void> _openEdit(BuildContext context) async {
     AudioManager.click();
     final controller = TextEditingController(text: Preferences.playerName);
-    final result = await showDialog<String>(
+    String? errorText;
+    var saving = false;
+
+    await showDialog<void>(
       context: context,
+      // Block the barrier-dismiss while the save RPC is in-flight so
+      // the user can't tap-outside mid-write and end up with a
+      // confused local cache vs. server state.
+      barrierDismissible: true,
       builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1F0F38),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-            side: const BorderSide(color: JackDesign.purple, width: 1.5),
-          ),
-          title: Text(
-            I18n.t.editName,
-            style: JackDesign.bungee(
-              fontSize: 14,
-              color: Colors.white,
-              letterSpacing: 1.2,
-            ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: controller,
-                autofocus: true,
-                maxLength: 18,
-                textCapitalization: TextCapitalization.characters,
-                style: JackDesign.bungee(
-                  fontSize: 16,
-                  color: Colors.white,
-                  letterSpacing: 0.6,
-                ),
-                decoration: InputDecoration(
-                  counterStyle: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.45),
-                  ),
-                  filled: true,
-                  fillColor: Colors.black.withValues(alpha: 0.35),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide:
-                        BorderSide(color: Colors.white.withValues(alpha: 0.10)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide:
-                        const BorderSide(color: JackDesign.yellow, width: 1.5),
-                  ),
-                ),
-                onSubmitted: (v) => Navigator.of(ctx).pop(v),
-              ),
-              const SizedBox(height: 14),
-              const _RecoveryCodeBlock(),
-              const SizedBox(height: 8),
-              _RestoreEntry(onRestored: () {
+        return StatefulBuilder(
+          builder: (ctx, setState) {
+            // Translates the server-side P0001 reason from
+            // [Preferences.setPlayerNameRemote] into the inline error
+            // we show under the TextField. `ok` returns null so the
+            // field's error decoration disappears on success.
+            String? messageFor(NameChangeResult r) {
+              switch (r) {
+                case NameChangeResult.ok:
+                  return null;
+                case NameChangeResult.taken:
+                  return I18n.t.nameErrorTaken;
+                case NameChangeResult.forbidden:
+                  return I18n.t.nameErrorForbidden;
+                case NameChangeResult.tooShort:
+                case NameChangeResult.tooLong:
+                case NameChangeResult.invalidChars:
+                  return I18n.t.nameErrorTooShort;
+                case NameChangeResult.empty:
+                  return I18n.t.nameErrorEmpty;
+                case NameChangeResult.error:
+                  return I18n.t.nameErrorGeneric;
+              }
+            }
+
+            Future<void> submit() async {
+              if (saving) return;
+              final candidate = controller.text.trim();
+              if (candidate == Preferences.playerName) {
+                // No-op rename — just close.
+                Navigator.of(ctx).pop();
+                return;
+              }
+              setState(() {
+                saving = true;
+                errorText = null;
+              });
+              final result =
+                  await Preferences.setPlayerNameRemote(candidate);
+              if (!ctx.mounted) return;
+              if (result == NameChangeResult.ok) {
+                AudioManager.uiConfirm();
                 Navigator.of(ctx).pop();
                 onChanged();
-              }),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                AudioManager.click();
-                Navigator.of(ctx).pop();
-              },
-              child: Text(
-                I18n.t.cancel,
-                style: JackDesign.manrope(
-                  fontSize: 12,
-                  weight: FontWeight.w800,
-                  color: Colors.white.withValues(alpha: 0.65),
-                  letterSpacing: 1.6,
+                return;
+              }
+              setState(() {
+                saving = false;
+                errorText = messageFor(result);
+              });
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1F0F38),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+                side: const BorderSide(color: JackDesign.purple, width: 1.5),
+              ),
+              title: Text(
+                I18n.t.editName,
+                style: JackDesign.bungee(
+                  fontSize: 14,
+                  color: Colors.white,
+                  letterSpacing: 1.2,
                 ),
               ),
-            ),
-            TextButton(
-              onPressed: () {
-                AudioManager.click();
-                Navigator.of(ctx).pop(controller.text);
-              },
-              child: Text(
-                I18n.t.save,
-                style: JackDesign.manrope(
-                  fontSize: 12,
-                  weight: FontWeight.w800,
-                  color: JackDesign.yellow,
-                  letterSpacing: 1.6,
-                ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    enabled: !saving,
+                    maxLength: 18,
+                    textCapitalization: TextCapitalization.characters,
+                    style: JackDesign.bungee(
+                      fontSize: 16,
+                      color: Colors.white,
+                      letterSpacing: 0.6,
+                    ),
+                    decoration: InputDecoration(
+                      counterStyle: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.45),
+                      ),
+                      errorText: errorText,
+                      // Multi-line so the recovery-mismatch explanation
+                      // shows in full instead of being clipped to
+                      // "recovery_c…".
+                      errorMaxLines: 3,
+                      filled: true,
+                      fillColor: Colors.black.withValues(alpha: 0.35),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(
+                          color: Colors.white.withValues(alpha: 0.10),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(
+                          color: JackDesign.yellow,
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                    onSubmitted: (_) => submit(),
+                    // Clear the inline error as soon as the user
+                    // starts editing again so they don't keep
+                    // reading a stale rejection while typing.
+                    onChanged: (_) {
+                      if (errorText != null) {
+                        setState(() => errorText = null);
+                      }
+                    },
+                  ),
+                ],
               ),
-            ),
-          ],
+              actions: [
+                TextButton(
+                  onPressed: saving
+                      ? null
+                      : () {
+                          AudioManager.click();
+                          Navigator.of(ctx).pop();
+                        },
+                  child: Text(
+                    I18n.t.cancel,
+                    style: JackDesign.manrope(
+                      fontSize: 12,
+                      weight: FontWeight.w800,
+                      color: Colors.white.withValues(alpha: 0.65),
+                      letterSpacing: 1.6,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: saving ? null : submit,
+                  child: saving
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                                JackDesign.yellow),
+                          ),
+                        )
+                      : Text(
+                          I18n.t.save,
+                          style: JackDesign.manrope(
+                            fontSize: 12,
+                            weight: FontWeight.w800,
+                            color: JackDesign.yellow,
+                            letterSpacing: 1.6,
+                          ),
+                        ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
-    if (result != null && result.trim().isNotEmpty) {
-      Preferences.playerName = result;
-      onChanged();
-    }
   }
 
   @override
@@ -623,78 +757,364 @@ class _PseudoChip extends StatelessWidget {
   }
 }
 
-class _StatChip extends StatelessWidget {
-  const _StatChip({
-    required this.icoName,
-    required this.label,
-    required this.value,
-    required this.accent,
-    this.iconColor,
-  });
-
-  final IcoName icoName;
-  final String label;
-  final String value;
-  final Color accent;
-  final Color? iconColor;
+/// Stats dialog opened from the home's trophy chip. Replaces the previous
+/// inline SCORE + TOP 1 chips with a tappable summary: same numbers,
+/// surfaced inside a modal that has room for the explanatory subtitles
+/// the chips couldn't fit. Same visual frame as [_HelpDialog] so the
+/// two top-bar dialogs read as one family — the only deliberate tweak
+/// is the yellow → purple accent, since this modal is about scores and
+/// BR wins, not learning.
+class _StatsDialog extends StatelessWidget {
+  const _StatsDialog();
 
   @override
   Widget build(BuildContext context) {
-    final isPurple = accent == JackDesign.purple;
+    final bestScore = Preferences.bestScore;
+    final brWins = Preferences.brWins;
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+        decoration: BoxDecoration(
+          color: JackDesign.bg.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: JackDesign.yellow, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: JackDesign.yellow.withValues(alpha: 0.35),
+              blurRadius: 24,
+            ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.55),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const JackIco(name: IcoName.mascot),
+                const SizedBox(width: 10),
+                // Header reads the player's chosen pseudo instead of
+                // the generic "MON JACK" so the modal feels personal.
+                // FittedBox.scaleDown handles long names (max 18 chars
+                // from the rename validator) without breaking the row.
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      Preferences.playerName,
+                      maxLines: 1,
+                      style: JackDesign.bungee(
+                        fontSize: 18,
+                        color: JackDesign.yellow,
+                        letterSpacing: 3,
+                      ),
+                    ),
+                  ),
+                ),
+                _RoundIconBtn(
+                  icoName: IcoName.close,
+                  onPressed: () => Navigator.of(context).pop(),
+                  tooltip: 'X',
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _StatRow(
+              icoName: IcoName.trophy,
+              accent: JackDesign.yellow,
+              iconColor: JackDesign.yellow,
+              label: I18n.t.statsBestScore,
+              desc: I18n.t.statsBestScoreDesc,
+              value: '$bestScore',
+            ),
+            const SizedBox(height: 10),
+            _StatRow(
+              icoName: IcoName.flame,
+              accent: JackDesign.purple,
+              iconColor: JackDesign.purpleHi,
+              label: I18n.t.statsBrWins,
+              desc: I18n.t.statsBrWinsDesc,
+              value: '$brWins',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One row inside [_StatsDialog]. Same skeleton as [_HelpEntry] minus
+/// the InkWell — the rows are read-only here, not actions. Trailing
+/// value chip uses the row's accent so a quick scan of the modal reads
+/// "yellow → solo, purple → BR".
+class _StatRow extends StatelessWidget {
+  const _StatRow({
+    required this.icoName,
+    required this.accent,
+    required this.iconColor,
+    required this.label,
+    required this.desc,
+    required this.value,
+  });
+
+  final IcoName icoName;
+  final Color accent;
+  final Color iconColor;
+  final String label;
+  final String desc;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.42),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: accent, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: accent.withValues(alpha: 0.20),
-            blurRadius: 18,
-          ),
-        ],
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: accent.withValues(alpha: 0.32),
+          width: 1.2,
+        ),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 28,
-            height: 28,
+            width: 36,
+            height: 36,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: accent.withValues(alpha: isPurple ? 0.22 : 0.18),
+              color: accent.withValues(alpha: 0.18),
             ),
-            child: JackIco(
-              name: icoName,
-              size: 16,
-              color: iconColor ?? accent,
+            child: JackIco(name: icoName, size: 18, color: iconColor),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: JackDesign.manrope(
+                    fontSize: 13,
+                    weight: FontWeight.w800,
+                    color: Colors.white,
+                    letterSpacing: 1.6,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  desc,
+                  style: JackDesign.manrope(
+                    fontSize: 11,
+                    weight: FontWeight.w500,
+                    color: Colors.white.withValues(alpha: 0.60),
+                    height: 1.35,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(width: 8),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: JackDesign.manrope(
-                  fontSize: 9,
-                  weight: FontWeight.w800,
-                  color: isPurple ? JackDesign.purpleHi : accent,
-                  letterSpacing: 1.6,
-                  height: 1,
-                ),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: accent, width: 1.4),
+            ),
+            child: Text(
+              value,
+              style: JackDesign.bungee(
+                fontSize: 14,
+                color: accent == JackDesign.purple
+                    ? JackDesign.purpleHi
+                    : accent,
+                height: 1,
               ),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: JackDesign.bungee(
-                  fontSize: 14,
-                  height: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// World ranking dialog. Sibling of [_StatsDialog] — same visual frame,
+/// purple accent (vs the stats dialog's yellow) so the two top-bar
+/// modals read as a pair without being confused at a glance. Two tabs:
+/// Battle Royale (sorted by lifetime wins) and Score (sorted by best
+/// solo score). The list bodies are placeholders until the global
+/// leaderboard queries land — the `coming soon` empty state ships now
+/// so the entry point is reachable from the home and the data layer
+/// can drop in without restructuring the UI.
+class _RankingDialog extends StatefulWidget {
+  const _RankingDialog();
+
+  @override
+  State<_RankingDialog> createState() => _RankingDialogState();
+}
+
+class _RankingDialogState extends State<_RankingDialog>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: 2, vsync: this);
+    _tabs.addListener(() {
+      // Tab change is technically two events (animation start + end);
+      // only chirp the click on the index commit so the SFX doesn't
+      // double-fire during the swipe gesture.
+      if (!_tabs.indexIsChanging) AudioManager.uiToggle();
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+        decoration: BoxDecoration(
+          color: JackDesign.bg.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: JackDesign.purple, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: JackDesign.purple.withValues(alpha: 0.35),
+              blurRadius: 24,
+            ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.55),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const JackIco(name: IcoName.podium, color: JackDesign.purple),
+                const SizedBox(width: 10),
+                Text(
+                  I18n.t.rankingTitle,
+                  style: JackDesign.bungee(
+                    fontSize: 18,
+                    color: JackDesign.purple,
+                    letterSpacing: 3,
+                  ),
                 ),
+                const Spacer(),
+                _RoundIconBtn(
+                  icoName: IcoName.close,
+                  onPressed: () => Navigator.of(context).pop(),
+                  tooltip: 'X',
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            TabBar(
+              controller: _tabs,
+              labelColor: JackDesign.purpleHi,
+              unselectedLabelColor: Colors.white.withValues(alpha: 0.45),
+              indicatorColor: JackDesign.purple,
+              indicatorWeight: 3,
+              labelStyle: JackDesign.manrope(
+                fontSize: 12,
+                weight: FontWeight.w800,
+                letterSpacing: 1.8,
               ),
-            ],
+              unselectedLabelStyle: JackDesign.manrope(
+                fontSize: 12,
+                weight: FontWeight.w800,
+                letterSpacing: 1.8,
+              ),
+              tabs: [
+                Tab(text: I18n.t.rankingTabBr),
+                Tab(text: I18n.t.rankingTabScore),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Bounded height so the dialog doesn't try to take the whole
+            // screen — TabBarView is unconstrained vertically otherwise.
+            SizedBox(
+              height: 280,
+              child: TabBarView(
+                controller: _tabs,
+                children: const [
+                  _RankingEmptyPanel(icoName: IcoName.flame),
+                  _RankingEmptyPanel(icoName: IcoName.trophy),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Empty-state shown inside each ranking tab until the global
+/// leaderboard data is wired up. Reads as a placeholder rather than
+/// an error so the user understands the feature is on the way.
+class _RankingEmptyPanel extends StatelessWidget {
+  const _RankingEmptyPanel({required this.icoName});
+  final IcoName icoName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: JackDesign.purple.withValues(alpha: 0.18),
+              border: Border.all(
+                color: JackDesign.purple.withValues(alpha: 0.45),
+                width: 1.2,
+              ),
+            ),
+            child: JackIco(name: icoName, size: 26, color: JackDesign.purple),
+          ),
+          const SizedBox(height: 14),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Text(
+              I18n.t.rankingComingSoon,
+              textAlign: TextAlign.center,
+              style: JackDesign.manrope(
+                fontSize: 12,
+                weight: FontWeight.w800,
+                color: Colors.white.withValues(alpha: 0.65),
+                letterSpacing: 1.6,
+                height: 1.4,
+              ),
+            ),
           ),
         ],
       ),
@@ -849,283 +1269,6 @@ class _MiniUnionJackPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-/// Read-only block shown inside the pseudo edit dialog: the recovery
-/// code with a copy button and a one-line explanation. Replacement
-/// path if the user loses access to this browser/device.
-class _RecoveryCodeBlock extends StatefulWidget {
-  const _RecoveryCodeBlock();
-
-  @override
-  State<_RecoveryCodeBlock> createState() => _RecoveryCodeBlockState();
-}
-
-class _RecoveryCodeBlockState extends State<_RecoveryCodeBlock> {
-  bool _justCopied = false;
-
-  Future<void> _copy() async {
-    AudioManager.click();
-    await Clipboard.setData(ClipboardData(text: Preferences.recoveryCode));
-    if (!mounted) return;
-    setState(() => _justCopied = true);
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) setState(() => _justCopied = false);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: JackDesign.yellow.withValues(alpha: 0.5),
-          width: 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            I18n.t.recoveryCodeLabel,
-            style: JackDesign.manrope(
-              fontSize: 9,
-              weight: FontWeight.w800,
-              color: JackDesign.yellow,
-              letterSpacing: 2.0,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: SelectableText(
-                  Preferences.recoveryCode,
-                  style: JackDesign.bungee(
-                    fontSize: 14,
-                    color: Colors.white,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-              ),
-              TextButton(
-                onPressed: _copy,
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  minimumSize: const Size(0, 30),
-                ),
-                child: Text(
-                  _justCopied ? I18n.t.codeCopied : I18n.t.copyCode,
-                  style: JackDesign.manrope(
-                    fontSize: 10,
-                    weight: FontWeight.w800,
-                    color: _justCopied
-                        ? JackDesign.green
-                        : JackDesign.yellow,
-                    letterSpacing: 1.4,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            I18n.t.recoveryCodeHelp,
-            style: JackDesign.manrope(
-              fontSize: 10,
-              weight: FontWeight.w600,
-              color: Colors.white.withValues(alpha: 0.6),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// "Restore profile" trigger row + modal. Opens a sub-dialog asking
-/// for a recovery code, calls Supabase, then reports the result.
-class _RestoreEntry extends StatelessWidget {
-  const _RestoreEntry({required this.onRestored});
-  final VoidCallback onRestored;
-
-  Future<void> _openRestore(BuildContext context) async {
-    AudioManager.click();
-    final controller = TextEditingController();
-    String? errorText;
-    var loading = false;
-
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setState) {
-            Future<void> submit() async {
-              if (loading) return;
-              final raw = controller.text;
-              final canon = Preferences.canonicalizeRecoveryCode(raw);
-              if (!Preferences.isValidRecoveryCode(canon)) {
-                setState(() => errorText = I18n.t.restoreInvalidCode);
-                return;
-              }
-              setState(() {
-                loading = true;
-                errorText = null;
-              });
-              final ok = await Preferences.restoreFromRecoveryCode(canon);
-              if (!ctx.mounted) return;
-              if (ok) {
-                ScaffoldMessenger.of(ctx)
-                  ..hideCurrentSnackBar()
-                  ..showSnackBar(SnackBar(
-                    behavior: SnackBarBehavior.floating,
-                    backgroundColor: const Color(0xFF1F0F38),
-                    content: Text(
-                      I18n.t.restoreSuccess,
-                      style: JackDesign.manrope(
-                        weight: FontWeight.w800,
-                        color: JackDesign.green,
-                        letterSpacing: 1.4,
-                      ),
-                    ),
-                  ));
-                Navigator.of(ctx).pop();
-                onRestored();
-              } else {
-                setState(() {
-                  loading = false;
-                  errorText = I18n.t.restoreNotFound;
-                });
-              }
-            }
-
-            return AlertDialog(
-              backgroundColor: const Color(0xFF1F0F38),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(18),
-                side: const BorderSide(color: JackDesign.purple, width: 1.5),
-              ),
-              title: Text(
-                I18n.t.restoreProfileTitle,
-                style: JackDesign.bungee(
-                  fontSize: 14,
-                  color: Colors.white,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    I18n.t.restoreProfileDesc,
-                    style: JackDesign.manrope(
-                      fontSize: 11,
-                      weight: FontWeight.w600,
-                      color: Colors.white.withValues(alpha: 0.7),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: controller,
-                    autofocus: true,
-                    textCapitalization: TextCapitalization.characters,
-                    style: JackDesign.bungee(
-                      fontSize: 16,
-                      color: Colors.white,
-                      letterSpacing: 1.2,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: I18n.t.pasteCodeHint,
-                      hintStyle: JackDesign.bungee(
-                        fontSize: 14,
-                        color: Colors.white.withValues(alpha: 0.25),
-                        letterSpacing: 1.2,
-                      ),
-                      errorText: errorText,
-                      filled: true,
-                      fillColor: Colors.black.withValues(alpha: 0.35),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide(
-                          color: Colors.white.withValues(alpha: 0.10),
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(
-                          color: JackDesign.yellow,
-                          width: 1.5,
-                        ),
-                      ),
-                    ),
-                    onSubmitted: (_) => submit(),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: loading
-                      ? null
-                      : () {
-                          AudioManager.click();
-                          Navigator.of(ctx).pop();
-                        },
-                  child: Text(
-                    I18n.t.cancel,
-                    style: JackDesign.manrope(
-                      fontSize: 12,
-                      weight: FontWeight.w800,
-                      color: Colors.white.withValues(alpha: 0.65),
-                      letterSpacing: 1.6,
-                    ),
-                  ),
-                ),
-                TextButton(
-                  onPressed: loading ? null : submit,
-                  child: Text(
-                    I18n.t.restoreCta,
-                    style: JackDesign.manrope(
-                      fontSize: 12,
-                      weight: FontWeight.w800,
-                      color: JackDesign.yellow,
-                      letterSpacing: 1.6,
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: TextButton(
-        onPressed: () => _openRestore(context),
-        style: TextButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          minimumSize: const Size(0, 28),
-        ),
-        child: Text(
-          I18n.t.restoreProfile,
-          style: JackDesign.manrope(
-            fontSize: 10,
-            weight: FontWeight.w800,
-            color: Colors.white.withValues(alpha: 0.55),
-            letterSpacing: 1.6,
-          ).copyWith(decoration: TextDecoration.underline),
-        ),
-      ),
-    );
-  }
-}
 
 /// Speech-bubble overlay shown above the BR button when the user taps
 /// it before completing the tutorial. Anchors to [anchorKey]'s render

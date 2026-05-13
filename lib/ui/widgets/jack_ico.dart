@@ -21,6 +21,8 @@ enum IcoName {
   volumeOn,
   volumeOff,
   help,
+  podium,
+  mascot,
 }
 
 class JackIco extends StatelessWidget {
@@ -101,8 +103,86 @@ class _IcoPainter extends CustomPainter {
         _volumeOff(canvas, fill, stroke);
       case IcoName.help:
         _help(canvas, fill, stroke);
+      case IcoName.podium:
+        _podium(canvas, fill);
+      case IcoName.mascot:
+        _mascot(canvas);
     }
     canvas.restore();
+  }
+
+  // Pocket version of the JackMascot cube for use at icon sizes. Body
+  // is forced white (the user explicitly asked for a white smiling
+  // cube) and the face details are inked dark so the silhouette stays
+  // readable on every background. The tint [color] passed to the
+  // painter is intentionally ignored here — this icon's identity is
+  // its colour, not the surrounding chrome.
+  void _mascot(Canvas c) {
+    const ink = Color(0xFF1A1A1A);
+    final whiteFill = Paint()..color = Colors.white;
+    final inkFill = Paint()..color = ink;
+    final faceStroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..strokeCap = StrokeCap.round
+      ..color = ink;
+    final outline = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeJoin = StrokeJoin.round
+      ..color = ink.withValues(alpha: 0.30);
+    // Body — rounded cube, same corner radius ratio as JackMascot's
+    // 92-unit body (18/92 ≈ 0.20 of the body width) so the small
+    // version reads as the same character.
+    final body = RRect.fromRectAndRadius(
+      const Rect.fromLTWH(3, 3, 18, 18),
+      const Radius.circular(3.6),
+    );
+    c.drawRRect(body, whiteFill);
+    c.drawRRect(body, outline);
+    // Eyes — two small dots, spaced like the big mascot's pupils.
+    c.drawCircle(const Offset(9, 12), 1.3, inkFill);
+    c.drawCircle(const Offset(15, 12), 1.3, inkFill);
+    // Smile — gentle upward arc, same curvature as JackMascot.smile.
+    final smile = Path()
+      ..moveTo(9, 16)
+      ..quadraticBezierTo(12, 18.4, 15, 16);
+    c.drawPath(smile, faceStroke);
+  }
+
+  // Podium silhouette: three stacked cubes — tallest centre (1st), then
+  // left (2nd), then right (3rd). The shape is dedicated to the global
+  // ranking entry on the home screen so it doesn't share vocabulary
+  // with the [_trophy] icon (which reads as "personal best score"). At
+  // 20 px the three blocks remain readable; at 14 px the centre block
+  // still anchors the silhouette so the symbol stays parseable.
+  void _podium(Canvas c, Paint fill) {
+    // Centre block (1st place) — tallest, anchors the silhouette.
+    c.drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTRB(9, 4, 15, 21),
+        const Radius.circular(1.4),
+      ),
+      fill,
+    );
+    // Left block (2nd place) — medium height.
+    c.drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTRB(2, 10, 9, 21),
+        const Radius.circular(1.4),
+      ),
+      fill,
+    );
+    // Right block (3rd place) — shortest, slightly lower than the 2nd
+    // so the asymmetry visibly reads as "1-2-3" rather than a mirrored
+    // shape.
+    c.drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTRB(15, 14, 22, 21),
+        const Radius.circular(1.4),
+      ),
+      fill,
+    );
   }
 
   void _help(Canvas c, Paint fill, Paint stroke) {
@@ -123,38 +203,47 @@ class _IcoPainter extends CustomPainter {
     c.drawCircle(const Offset(12, 18.5), 1.2, fill);
   }
 
+  // Volume icons: previous version had wave2 use radius=6 from (20,_),
+  // which bulged the arc out to x=26 — past the 24-unit viewBox — and
+  // visually pushed the speaker-on glyph to the right inside its
+  // container. The redesign keeps the same vocabulary (speaker body +
+  // two waves) but bounds every path to ~x∈[3,22] so the content is
+  // centred on x=12.5 (≈ viewBox centre) and balanced left/right.
+  // The mute "X" mirror uses the same speaker so both icons share the
+  // same optical centre — a swap between the two no longer makes the
+  // mute button shift sideways.
   void _volumeOn(Canvas c, Paint fill, Paint stroke) {
     final speaker = Path()
-      ..moveTo(4, 9)
-      ..lineTo(9, 9)
-      ..lineTo(14, 5)
-      ..lineTo(14, 19)
-      ..lineTo(9, 15)
-      ..lineTo(4, 15)
+      ..moveTo(3, 9)
+      ..lineTo(8, 9)
+      ..lineTo(13, 5)
+      ..lineTo(13, 19)
+      ..lineTo(8, 15)
+      ..lineTo(3, 15)
       ..close();
     c.drawPath(speaker, fill);
     final wave1 = Path()
-      ..moveTo(17, 9)
-      ..arcToPoint(const Offset(17, 15), radius: const Radius.circular(3));
+      ..moveTo(15, 10)
+      ..arcToPoint(const Offset(15, 14), radius: const Radius.circular(2));
     final wave2 = Path()
-      ..moveTo(20, 6)
-      ..arcToPoint(const Offset(20, 18), radius: const Radius.circular(6));
+      ..moveTo(18, 8)
+      ..arcToPoint(const Offset(18, 16), radius: const Radius.circular(4));
     c.drawPath(wave1, stroke);
     c.drawPath(wave2, stroke);
   }
 
   void _volumeOff(Canvas c, Paint fill, Paint stroke) {
     final speaker = Path()
-      ..moveTo(4, 9)
-      ..lineTo(9, 9)
-      ..lineTo(14, 5)
-      ..lineTo(14, 19)
-      ..lineTo(9, 15)
-      ..lineTo(4, 15)
+      ..moveTo(3, 9)
+      ..lineTo(8, 9)
+      ..lineTo(13, 5)
+      ..lineTo(13, 19)
+      ..lineTo(8, 15)
+      ..lineTo(3, 15)
       ..close();
     c.drawPath(speaker, fill);
-    c.drawLine(const Offset(17, 9), const Offset(22, 14), stroke);
-    c.drawLine(const Offset(22, 9), const Offset(17, 14), stroke);
+    c.drawLine(const Offset(16, 9), const Offset(21, 14), stroke);
+    c.drawLine(const Offset(21, 9), const Offset(16, 14), stroke);
   }
 
   void _trophy(Canvas c, Paint fill, Paint stroke) {

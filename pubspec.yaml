@@ -44,6 +44,12 @@ dependencies:
   flutter_soloud: ^3.1.0
   google_fonts: ^6.2.1
   shared_preferences: ^2.3.3
+  # flutter_secure_storage stores the player_id in the iOS Keychain
+  # (and Android EncryptedSharedPreferences). The Keychain survives
+  # app uninstall on iOS by default — the right place for an identity
+  # that should outlive a reinstall, since SharedPreferences /
+  # NSUserDefaults are wiped with the app sandbox.
+  flutter_secure_storage: ^9.2.2
   supabase_flutter: ^2.8.0
   device_info_plus: ^11.2.0
   crypto: ^3.0.3

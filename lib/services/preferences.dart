@@ -6,15 +6,38 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../i18n/i18n.dart';
 
+/// Outcome of [Preferences.setPlayerNameRemote]. The values map one-to-one
+/// to the `P0001` exception messages raised by the `set_player_name`
+/// RPC in migration 0010 so each failure surfaces a specific localised
+/// inline error in the pseudo edit dialog.
+enum NameChangeResult {
+  ok,
+  taken,
+  forbidden,
+  tooShort,
+  tooLong,
+  invalidChars,
+  empty,
+  error,
+}
+
 /// User preferences. Persisted across launches via [SharedPreferences]:
 /// high score, tutorial toggle, and the auto-generated Battle Royale
-/// nickname (so other players see the same JACK_xxxx name session after
-/// session).
+/// nickname.
+///
+/// **Identity model.** Each device is identified by a salted-SHA256 hash
+/// of its IDFV (iOS) / Android ID. That id is stable across reinstalls,
+/// so the same physical phone always re-hydrates the same cloud profile
+/// — no recovery code, no manual restore step. A future Google sign-in
+/// layer will replace this with a proper cross-device identity; for now
+/// the device id is identity enough (it's not trivially guessable from
+/// outside the device).
 class Preferences {
   // Write-through cache: best_score / br_wins / player_name are mirrored
   // to SharedPreferences so the game survives offline reloads, but the
@@ -27,11 +50,29 @@ class Preferences {
   static const _kPlayerName = 'player_name';
   static const _kTutorialCompleted = 'tutorial_completed';
   static const _kPlayerId = 'player_id';
-  static const _kRecoveryCode = 'recovery_code';
   static const _kLocale = 'locale';
   static const _kMuted = 'muted';
+  // Legacy key from the recovery-code era (≤ 0010). Cleaned up on the
+  // first launch of the device-id-only build so the orphan entry
+  // doesn't linger in prefs forever.
+  static const _kLegacyRecoveryCode = 'recovery_code';
 
   static SharedPreferences? _prefs;
+
+  /// Secure storage — used exclusively for the `player_id` so the
+  /// identity survives an app uninstall. On iOS this maps to the
+  /// Keychain, which is preserved across reinstalls by default
+  /// (NSUserDefaults / SharedPreferences are wiped with the app
+  /// sandbox). On Android it falls back to EncryptedSharedPreferences
+  /// — also in the app sandbox, so reinstalls still produce a fresh
+  /// identity there until Google sign-in lands.
+  static const _secureStorage = FlutterSecureStorage(
+    iOptions: IOSOptions(
+      accessibility: KeychainAccessibility.first_unlock,
+    ),
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
+  static const _secureKeyPlayerId = 'jj_player_id';
   static int _bestScore = 0;
   static int _brWins = 0;
   // Onboarding gate: the interactive tutorial overlay watches the
@@ -41,7 +82,6 @@ class Preferences {
   static bool _tutorialCompleted = false;
   static String _playerId = '';
   static String _playerName = '';
-  static String _recoveryCode = '';
   static AppLocale _locale = AppLocale.fr;
   static bool _muted = false;
 
@@ -50,30 +90,42 @@ class Preferences {
   /// Two-stage profile boot:
   ///   1. Read the local mirror (SharedPreferences) so an offline reload
   ///      still shows last-known stats instead of zeros.
-  ///   2. Try to fetch the cloud row via `redeem_recovery_code`. If the
-  ///      RPC succeeds it overwrites the local cache (DB wins on
-  ///      conflict); if it returns no row (fresh DB, fresh device) we
-  ///      reset the cache to defaults and upsert a fresh profile.
-  ///      Network failures are swallowed — the local mirror keeps us
-  ///      functional until the next online launch.
+  ///   2. Try to fetch the cloud row via `get_my_profile(player_id)`. If
+  ///      the RPC returns a row, the local cache is overwritten (DB wins
+  ///      on conflict). If there's no row yet, the local mirror keeps
+  ///      its defaults and the next `syncProfileToCloud` will create the
+  ///      row. Network failures are swallowed — the local mirror keeps
+  ///      the app usable offline.
   static Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
     _tutorialCompleted = _prefs?.getBool(_kTutorialCompleted) ?? false;
 
-    final storedId = _prefs?.getString(_kPlayerId);
-    if (storedId != null && storedId.isNotEmpty) {
-      _playerId = storedId;
-    } else {
-      _playerId = await _deriveDeviceId() ?? _generatePlayerId();
+    // Player_id resolution, in priority order:
+    //   1. Secure storage (Keychain on iOS) — survives uninstall.
+    //   2. SharedPreferences — for users that pre-date the Keychain
+    //      migration, so they keep the same id when they update the
+    //      app without uninstalling.
+    //   3. Newly derived from IDFV / Android ID (salted-hashed) — or
+    //      a random uuid as a last resort.
+    // Whichever wins is mirrored back into BOTH stores so the next
+    // boot resolves it from the highest priority source.
+    final secureId = await _readSecurePlayerId();
+    if (secureId != null && secureId.isNotEmpty) {
+      _playerId = secureId;
+      // Keep the SharedPreferences mirror up to date so older code
+      // paths that read from prefs still see the right value.
       _prefs?.setString(_kPlayerId, _playerId);
-    }
-
-    final storedCode = _prefs?.getString(_kRecoveryCode);
-    if (storedCode != null && storedCode.isNotEmpty) {
-      _recoveryCode = storedCode;
     } else {
-      _recoveryCode = _generateRecoveryCode();
-      _prefs?.setString(_kRecoveryCode, _recoveryCode);
+      final prefsId = _prefs?.getString(_kPlayerId);
+      if (prefsId != null && prefsId.isNotEmpty) {
+        _playerId = prefsId;
+      } else {
+        _playerId = await _deriveDeviceId() ?? _generatePlayerId();
+        _prefs?.setString(_kPlayerId, _playerId);
+      }
+      // Promote the value into the Keychain so the next uninstall
+      // doesn't drop us back to a fresh identity.
+      await _writeSecurePlayerId(_playerId);
     }
 
     // Stage 1: local mirror. Survives offline reloads — the user keeps
@@ -92,60 +144,83 @@ class Preferences {
     );
     _muted = _prefs?.getBool(_kMuted) ?? false;
 
-    // Stage 2: cloud is the source of truth. Overwrites the mirror on
-    // success, or resets it on "no row" so a DB wipe is reflected on
-    // the very next launch.
+    // One-time housekeeping: drop the legacy recovery_code prefs
+    // entry from the previous identity model. Harmless if absent.
+    if (_prefs?.containsKey(_kLegacyRecoveryCode) ?? false) {
+      _prefs?.remove(_kLegacyRecoveryCode);
+    }
+
+    // Stage 2: cloud is the source of truth. Overwrites the mirror
+    // when a row exists, otherwise leaves the mirror as-is.
     await _hydrateFromCloud();
   }
 
   /// Pulls `name`, `best_score`, `br_wins` for our identity from the
-  /// `br_profiles` table via `redeem_recovery_code`, then overwrites
-  /// both the in-memory values AND the local SharedPreferences mirror
-  /// so the next offline reload sees the freshest known state.
+  /// `br_profiles` table via `get_my_profile`, then overwrites both
+  /// the in-memory values AND the local SharedPreferences mirror so
+  /// the next offline reload sees the freshest known state.
   ///
   /// Three outcomes:
   ///   • Row returned    → DB wins, local mirror updated.
-  ///   • No row returned → treated as "fresh start" (e.g. cloud wipe):
-  ///                       in-memory values reset to defaults, mirror
-  ///                       cleared, and an upsert creates a new row.
+  ///   • No row returned → fresh device → kick off a [syncProfileToCloud]
+  ///                       so the row gets created from the local
+  ///                       defaults. Local mirror is not touched.
   ///   • RPC error       → swallowed; local mirror values from stage 1
   ///                       keep the app usable offline.
   static Future<void> _hydrateFromCloud() async {
     try {
       final client = Supabase.instance.client;
       final result = await client.rpc(
-        'redeem_recovery_code',
-        params: {'p_code': _recoveryCode},
+        'get_my_profile',
+        params: {'p_player_id': _playerId},
       );
       if (result is List && result.isNotEmpty) {
         final row = (result.first as Map).cast<String, dynamic>();
-        _playerId = row['player_id'] as String? ?? _playerId;
         _playerName = row['name'] as String? ?? _playerName;
         _bestScore = (row['best_score'] as int?) ?? 0;
         _brWins = (row['br_wins'] as int?) ?? 0;
         _prefs
-          ?..setString(_kPlayerId, _playerId)
-          ..setString(_kPlayerName, _playerName)
+          ?..setString(_kPlayerName, _playerName)
           ..setInt(_kBestScore, _bestScore)
           ..setInt(_kBrWins, _brWins);
       } else {
-        // Cloud has no row for this code — most likely a DB wipe. Roll
-        // the local mirror back to defaults so the user doesn't keep
-        // seeing stale stats, then upsert to create a fresh row.
-        _bestScore = 0;
-        _brWins = 0;
-        _playerName = _generatePlayerName();
-        _prefs
-          ?..setInt(_kBestScore, 0)
-          ..setInt(_kBrWins, 0)
-          ..setString(_kPlayerName, _playerName);
-        unawaited(syncProfileToCloud());
+        // No cloud row yet — first launch on this device. Seed one
+        // from the local defaults so the matchmaking lobby / leaderboard
+        // can find us on the very next interaction. Awaited (was
+        // fire-and-forget) so a transient RPC failure surfaces inside
+        // the same try/catch instead of vanishing into the void.
+        await syncProfileToCloud();
       }
     } catch (e) {
       // Offline / RPC error: keep the local mirror (already loaded in
       // stage 1 of init). Stats survive the session until we're back
       // online and the next hydrate or sync runs.
       debugPrint('[Preferences] _hydrateFromCloud failed: $e');
+    }
+  }
+
+  /// Reads `player_id` from the Keychain (iOS) / EncryptedSharedPreferences
+  /// (Android). Returns null on any platform error or when the entry is
+  /// missing — the caller falls back to the legacy SharedPreferences mirror
+  /// then to a freshly derived id.
+  static Future<String?> _readSecurePlayerId() async {
+    try {
+      return await _secureStorage.read(key: _secureKeyPlayerId);
+    } catch (e) {
+      debugPrint('[Preferences] secure read failed: $e');
+      return null;
+    }
+  }
+
+  /// Persists `player_id` to the Keychain so a future uninstall +
+  /// reinstall on the same device picks the same identity back up.
+  /// Swallows platform errors — losing the Keychain copy just means
+  /// the next install gets a fresh id (the legacy behaviour).
+  static Future<void> _writeSecurePlayerId(String value) async {
+    try {
+      await _secureStorage.write(key: _secureKeyPlayerId, value: value);
+    } catch (e) {
+      debugPrint('[Preferences] secure write failed: $e');
     }
   }
 
@@ -164,9 +239,10 @@ class Preferences {
   /// (no device-stable id exists by design) and on any platform error,
   /// in which case the caller falls back to a random uuid.
   ///
-  /// Salting with the app namespace means two different apps from the
-  /// same vendor produce different ids — important if this game ever
-  /// ships alongside another title from the same studio.
+  /// Stability across reinstalls is the whole point: the IDFV survives
+  /// app deletion as long as at least one app from the same vendor is
+  /// installed, so a user who removes and re-adds the game reloads the
+  /// same cloud profile automatically.
   static Future<String?> _deriveDeviceId() async {
     if (kIsWeb) return null;
     try {
@@ -192,45 +268,6 @@ class Preferences {
   static String _generatePlayerName() {
     final rng = Random.secure();
     return 'JACK_${1000 + rng.nextInt(9000)}';
-  }
-
-  /// Human-readable recovery code: `JJ-XXXX-XXXX` over a 32-char
-  /// alphabet that excludes ambiguous glyphs (0/O, 1/I/L). ~40 bits
-  /// of entropy per code — collision-resistant at any realistic
-  /// player count without making the user type 30 chars.
-  static String _generateRecoveryCode() {
-    const alphabet = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'; // no 0/1/I/L/O
-    final rng = Random.secure();
-    String block() {
-      final sb = StringBuffer();
-      for (var i = 0; i < 4; i++) {
-        sb.write(alphabet[rng.nextInt(alphabet.length)]);
-      }
-      return sb.toString();
-    }
-
-    return 'JJ-${block()}-${block()}';
-  }
-
-  /// True when [code] matches the `JJ-XXXX-XXXX` shape and uses only
-  /// alphabet characters. Hyphens are optional in the input — the
-  /// caller usually canonicalizes first via [canonicalizeRecoveryCode].
-  static bool isValidRecoveryCode(String code) {
-    final canon = canonicalizeRecoveryCode(code);
-    return RegExp(r'^JJ-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}'
-            r'-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$')
-        .hasMatch(canon);
-  }
-
-  /// Normalises user-typed input: uppercases, strips whitespace, and
-  /// re-inserts the standard hyphens so `jj7k2pa9xb`, `JJ 7K2P A9XB`
-  /// and `JJ-7K2P-A9XB` all canonicalize to the same string.
-  static String canonicalizeRecoveryCode(String input) {
-    final cleaned = input.toUpperCase().replaceAll(RegExp(r'[^0-9A-Z]'), '');
-    if (cleaned.length == 10 && cleaned.startsWith('JJ')) {
-      return 'JJ-${cleaned.substring(2, 6)}-${cleaned.substring(6, 10)}';
-    }
-    return input.trim().toUpperCase();
   }
 
   // ---- High score ----
@@ -279,90 +316,112 @@ class Preferences {
 
   // ---- Battle Royale identity ----
 
-  /// Stable random ID for this device — used as the player's primary key
-  /// in the BR matchmaking and presence flow. Never displayed.
+  /// Stable device-derived id used as the player's primary key in the
+  /// BR matchmaking flow and `br_profiles`. Never displayed.
   static String get playerId => _playerId;
 
   /// Display name shown to other players (e.g. JACK_4271). Generated once
   /// at first launch; can be changed later from settings.
+  ///
+  /// The setter is local-only — used during hydration. Explicit user
+  /// renames go through [setPlayerNameRemote] which calls the validated
+  /// `set_player_name` RPC (blacklist + uniqueness).
   static String get playerName => _playerName;
   static set playerName(String value) {
     final cleaned = value.trim();
     if (cleaned.isEmpty) return;
     _playerName = cleaned;
     _prefs?.setString(_kPlayerName, cleaned);
-    unawaited(syncProfileToCloud());
   }
 
-  // ---- Recovery code ----
+  /// Validated rename. Calls the `set_player_name` RPC (migration 0010
+  /// + 0011) which:
+  ///   • trims + length-checks the candidate,
+  ///   • rejects any substring on the server's blacklist,
+  ///   • rejects names already taken by another player_id
+  ///     (case-insensitive).
+  ///
+  /// On success the local mirror is updated. Failures map the server's
+  /// `P0001` message to a specific enum value so the dialog can show a
+  /// localised inline error.
+  static Future<NameChangeResult> setPlayerNameRemote(String name) async {
+    final cleaned = name.trim();
+    if (cleaned.isEmpty) return NameChangeResult.empty;
+    if (cleaned.length < 2) return NameChangeResult.tooShort;
+    try {
+      final client = Supabase.instance.client;
+      final result = await client.rpc('set_player_name', params: {
+        'p_player_id': _playerId,
+        'p_name': cleaned,
+      });
+      final canon = (result is String && result.trim().isNotEmpty)
+          ? result.trim()
+          : cleaned;
+      _playerName = canon;
+      _prefs?.setString(_kPlayerName, canon);
+      return NameChangeResult.ok;
+    } on PostgrestException catch (e) {
+      return _mapNameError(e.message);
+    } catch (e) {
+      debugPrint('[Preferences] setPlayerNameRemote failed: $e');
+      return NameChangeResult.error;
+    }
+  }
 
-  /// `JJ-XXXX-XXXX` code that lets the user move their profile to
-  /// another browser / new install. Read-only after the first launch.
-  static String get recoveryCode => _recoveryCode;
+  /// Translates the server's exception message (raised with USING
+  /// ERRCODE='P0001' inside [set_player_name]) into the matching
+  /// [NameChangeResult]. Anything we don't recognise falls back to
+  /// [NameChangeResult.error] so the UI shows the generic message
+  /// rather than a backend identifier.
+  static NameChangeResult _mapNameError(String message) {
+    if (message.contains('name_empty')) return NameChangeResult.empty;
+    if (message.contains('name_too_short')) return NameChangeResult.tooShort;
+    if (message.contains('name_too_long')) return NameChangeResult.tooLong;
+    if (message.contains('name_invalid_chars')) {
+      return NameChangeResult.invalidChars;
+    }
+    if (message.contains('name_forbidden')) return NameChangeResult.forbidden;
+    if (message.contains('name_taken')) return NameChangeResult.taken;
+    debugPrint('[Preferences] unrecognised name error: $message');
+    return NameChangeResult.error;
+  }
 
   // ---- Cloud profile sync (Supabase `br_profiles`) ----
 
-  /// Pushes the current name + best_score + br_wins + recovery_code to
-  /// the cloud profile row keyed by [playerId]. Server takes max() of
-  /// the numeric fields so late writes never regress saved progress,
-  /// and the recovery code is sticky (never overwritten) once set.
+  /// Pushes the current name + best_score + br_wins to the cloud
+  /// profile row keyed by [playerId]. Server takes max() of the
+  /// numeric fields so late writes never regress saved progress.
   ///
-  /// Safe to call before Supabase is initialized — the call is silently
-  /// skipped if the client isn't ready yet (e.g. very first boot).
+  /// `upsert_br_profile` returns the canonical name actually stored
+  /// (it auto-suffixes `JACK_xxxx_2`, `_3`, … on the very first
+  /// INSERT if another device happened to pick the same name — see
+  /// migration 0011 / 0012). We apply that value to the local
+  /// mirror so the BR lobby + leaderboard see the deduped identity
+  /// from the start.
+  ///
+  /// Safe to call before Supabase is initialized — the call is
+  /// silently skipped if the client isn't ready yet (e.g. very first
+  /// boot).
   static Future<void> syncProfileToCloud() async {
     try {
       final client = Supabase.instance.client;
-      await client.rpc('upsert_br_profile', params: {
+      final result = await client.rpc('upsert_br_profile', params: {
         'p_player_id': _playerId,
         'p_name': _playerName,
         'p_best_score': _bestScore,
         'p_br_wins': _brWins,
-        'p_recovery_code': _recoveryCode,
       });
+      if (result is String) {
+        final canon = result.trim();
+        if (canon.isNotEmpty && canon != _playerName) {
+          _playerName = canon;
+          _prefs?.setString(_kPlayerName, canon);
+        }
+      }
     } catch (e) {
       // Cloud profile is best-effort — local SharedPreferences is the
       // source of truth for this device, so a failed sync is fine.
       debugPrint('[Preferences] syncProfileToCloud failed: $e');
-    }
-  }
-
-  /// Calls the `redeem_recovery_code` RPC and, if the code matches a
-  /// profile, overwrites the local Preferences (playerId, name, scores)
-  /// with the cloud-of-record values. Returns true on success so the UI
-  /// can confirm; false otherwise.
-  ///
-  /// Local progress on the device before the restore is *not* merged —
-  /// the recovered profile replaces it. The recovery code itself is
-  /// updated to the recovered one so subsequent restores from this
-  /// device keep pointing to the same cloud row.
-  static Future<bool> restoreFromRecoveryCode(String code) async {
-    final canon = canonicalizeRecoveryCode(code);
-    if (!isValidRecoveryCode(canon)) return false;
-    try {
-      final client = Supabase.instance.client;
-      final result = await client.rpc(
-        'redeem_recovery_code',
-        params: {'p_code': canon},
-      );
-      if (result is! List || result.isEmpty) return false;
-      final row = (result.first as Map).cast<String, dynamic>();
-      _playerId = row['player_id'] as String;
-      _playerName = row['name'] as String;
-      _bestScore = (row['best_score'] as int?) ?? 0;
-      _brWins = (row['br_wins'] as int?) ?? 0;
-      _recoveryCode = canon;
-      // Mirror the recovered profile into the local cache so the next
-      // (potentially offline) reload keeps the restored stats.
-      _prefs
-        ?..setString(_kPlayerId, _playerId)
-        ..setString(_kPlayerName, _playerName)
-        ..setInt(_kBestScore, _bestScore)
-        ..setInt(_kBrWins, _brWins)
-        ..setString(_kRecoveryCode, _recoveryCode);
-      return true;
-    } catch (e) {
-      debugPrint('[Preferences] restoreFromRecoveryCode failed: $e');
-      return false;
     }
   }
 

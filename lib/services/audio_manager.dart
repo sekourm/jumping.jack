@@ -427,6 +427,63 @@ class AudioManager {
   }
 
   // ---------------------------------------------------------------------------
+  // App lifecycle (foreground / background)
+  // ---------------------------------------------------------------------------
+  //
+  // Separate from the user-facing mute toggle so backgrounding the app
+  // doesn't flip the persisted "muted" preference. The flag also gates
+  // SFX (alongside `_muted`) inside [_allow] so a one-shot that fires
+  // the instant the app pauses doesn't leak into the lock screen.
+
+  static bool _backgrounded = false;
+  static bool get isBackgrounded => _backgrounded;
+
+  /// Called from [JumpingJackApp]'s [WidgetsBindingObserver] when the
+  /// Android/iOS shell tells us the app is no longer foregrounded. Pauses
+  /// every long-form audio source (music + ambient loops) and arms the
+  /// SFX gate so any combo tick / kill bell still firing on the way out
+  /// doesn't bleed past the home-screen swipe.
+  static Future<void> onAppBackground() async {
+    if (_backgrounded) return;
+    _backgrounded = true;
+    try {
+      await _menuMusic.pause();
+      await _gameMusic.pause();
+      for (final p in _ambientLoops.values) {
+        await p.pause();
+      }
+    } catch (_) {}
+  }
+
+  /// Restores the audio sources paused by [onAppBackground]. Only resumes
+  /// what was actually playing (i.e. the current music track and ambient
+  /// loops with active intensity) so we don't ressurect a loop the game
+  /// had legitimately stopped before backgrounding.
+  static Future<void> onAppForeground() async {
+    if (!_backgrounded) return;
+    _backgrounded = false;
+    if (_muted) return;
+    final cur = _currentTrack;
+    if (cur != null) {
+      try {
+        _musicTracks[cur]!.resume();
+        _musicTracks[cur]!
+            .setVolume(_trackBaseVolume[cur]! * musicVolume * _duck);
+      } catch (_) {}
+    }
+    for (final h in _ambientHandles.values) {
+      if (h.active) {
+        try {
+          h.player.resume();
+          h.player.setVolume(
+            h.intensity * h.maxVolume * sfxVolume * _nonMenuAttenuation,
+          );
+        } catch (_) {}
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Mute toggle
   // ---------------------------------------------------------------------------
 
@@ -589,7 +646,7 @@ class AudioManager {
   static final Map<String, List<DateTime>> _voiceLog = {};
 
   static bool _allow(String file, {int maxPerSecond = 6}) {
-    if (_muted) return false;
+    if (_muted || _backgrounded) return false;
     final now = DateTime.now();
     final log = _voiceLog.putIfAbsent(file, () => []);
     final cutoff = now.subtract(const Duration(seconds: 1));

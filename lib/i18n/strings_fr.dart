@@ -96,6 +96,57 @@ class StringsFr implements Strings {
   @override
   String get helpReplayTutorialDesc =>
       'Relance la séquence d\'apprentissage avec Jack au prochain solo.';
+  @override
+  String get statsTitle => 'MON JACK';
+  @override
+  String get statsBestScore => 'Meilleur score';
+  @override
+  String get statsBestScoreDesc =>
+      'Score le plus haut atteint en partie solo.';
+  @override
+  String get statsBrWins => 'Victoires Battle Royale';
+  @override
+  String get statsBrWinsDesc =>
+      'Nombre de Top 1 obtenus en Battle Royale.';
+  @override
+  String get statsNoScore => 'Aucun score';
+  @override
+  String get rankingTitle => 'CLASSEMENT';
+  @override
+  String get rankingTabBr => 'BATTLE ROYALE';
+  @override
+  String get rankingTabScore => 'SCORE';
+  @override
+  String get rankingComingSoon => 'Classement bientôt disponible';
+  @override
+  String get rankingTooltip => 'Classement mondial';
+  @override
+  String get nameErrorTaken => 'Ce pseudo est déjà pris';
+  @override
+  String get nameErrorForbidden => 'Ce pseudo n\'est pas autorisé';
+  @override
+  String get nameErrorTooShort => 'Pseudo trop court (2 caractères min.)';
+  @override
+  String get nameErrorEmpty => 'Pseudo requis';
+  @override
+  String get nameErrorGeneric => 'Erreur, réessaie';
+  @override
+  String get nameErrorRecoveryMismatch =>
+      'Profil verrouillé sur le cloud. Utilise ton code de récupération '
+      'pour le restaurer, ou réinitialise pour repartir à zéro.';
+  @override
+  String get resetProfileLabel => 'Réinitialiser le profil';
+  @override
+  String get resetProfileTitle => 'RÉINITIALISER LE PROFIL';
+  @override
+  String get resetProfileDesc =>
+      'Crée un nouveau profil sur ce device. Tes scores et victoires '
+      'BR seront remis à zéro. L\'ancien profil reste accessible '
+      'avec son code de récupération.';
+  @override
+  String get resetProfileCta => 'Réinitialiser';
+  @override
+  String get resetProfileSuccess => 'Nouveau profil créé';
 
   // Death overlay
   @override

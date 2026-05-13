@@ -119,6 +119,31 @@ class _CosmicPainter extends CustomPainter {
   /// matches the previous standalone twinkle controller.
   static const double _twinkleCyclesPerLoop = 15.0;
 
+  /// Fraction of the canvas height (top and bottom) over which a star
+  /// fades to zero alpha so its modulo-1 wrap is never visible. 8 %
+  /// keeps the fade fast enough that the centre of the screen stays
+  /// fully populated yet long enough that the easing reads as a soft
+  /// disappearance rather than a step.
+  static const double _edgeFadeFraction = 0.08;
+
+  /// Smoothstep-shaped alpha that's 0 at the very top/bottom of the
+  /// canvas, ramps up through [_edgeFadeFraction] of the height, and
+  /// stays at 1 across the middle band. Hides the wrap point in
+  /// [_CosmicPainter.paint] so the parallax loop feels seamless.
+  static double _edgeAlpha(double y) {
+    const fade = _edgeFadeFraction;
+    double t;
+    if (y < fade) {
+      t = y / fade;
+    } else if (y > 1 - fade) {
+      t = (1 - y) / fade;
+    } else {
+      return 1.0;
+    }
+    t = t.clamp(0.0, 1.0);
+    return t * t * (3 - 2 * t);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
@@ -173,7 +198,15 @@ class _CosmicPainter extends CustomPainter {
           0.5 *
               sin(drift * 2 * pi * _twinkleCyclesPerLoop + s.phase * 4);
       final brightness = 0.30 + 0.55 * flicker;
-      paint.color = Colors.white.withValues(alpha: brightness);
+      // Edge fade: without it the `%1.0` wrap teleports the star from
+      // y≈0 back to y≈1 (or the reverse) in a single frame, which the
+      // user sees as a "reset pop" on the home backdrop. By smoothly
+      // fading the star to zero alpha in the top/bottom 8 % of the
+      // canvas, the wrap happens while the star is already invisible
+      // and the loop becomes seamless.
+      final edge = _edgeAlpha(yProgress);
+      if (edge <= 0.0) continue;
+      paint.color = Colors.white.withValues(alpha: brightness * edge);
       canvas.drawCircle(Offset(cx, cy), s.size, paint);
     }
 

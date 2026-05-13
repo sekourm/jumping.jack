@@ -113,6 +113,18 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
   double _chargeMs = 0;
   Vector2? _fingerScreenPos;
 
+  // Short rolling history of finger samples used by [_releaseAimPos] to
+  // filter out the "lift-off slip" iOS reports when the user pulls their
+  // finger off the screen. The capacitive sensor loses a couple of pixels
+  // of precision as the contact area shrinks, producing a final
+  // `onDragUpdate` whose position drifts off the intended aim — without
+  // this buffer the jump goes a hair beside where the player was
+  // holding. Capped at ~250 ms; the lookback at release picks the sample
+  // from ~80 ms ago so intentional last-instant adjustments still land.
+  final List<({DateTime t, Vector2 pos})> _fingerHistory = [];
+  static const Duration _releaseSlipLookback = Duration(milliseconds: 80);
+  static const Duration _fingerHistoryWindow = Duration(milliseconds: 250);
+
   // Captured at reset time, used as the reference for "height above start".
   double _initialPlayerFeetY = 0;
 
@@ -1774,7 +1786,8 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
       _resetCharging();
       return;
     }
-    final fingerWorld = _screenToWorld(_fingerScreenPos!);
+    final aimScreenPos = _releaseAimPos();
+    final fingerWorld = _screenToWorld(aimScreenPos);
     final velocity = JumpSolver.solve(
       playerPos: player.centerWorld,
       fingerPos: fingerWorld,
@@ -1817,9 +1830,40 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     _charging = false;
     _chargeMs = 0;
     _fingerScreenPos = null;
+    _fingerHistory.clear();
     preview.active = false;
     player.aimDirection = null;
     gameState.updateCharge(charging: false, progress: 0);
+  }
+
+  /// Records the latest finger sample into [_fingerHistory] and prunes
+  /// anything older than [_fingerHistoryWindow]. Cheap — the buffer holds
+  /// at most ~15 entries at 60 Hz over the slip-lookback window.
+  void _recordFingerSample(Vector2 pos) {
+    final now = DateTime.now();
+    _fingerHistory.add((t: now, pos: pos.clone()));
+    final cutoff = now.subtract(_fingerHistoryWindow);
+    while (_fingerHistory.isNotEmpty &&
+        _fingerHistory.first.t.isBefore(cutoff)) {
+      _fingerHistory.removeAt(0);
+    }
+  }
+
+  /// Returns the finger position the [_releaseJump] solver should aim at.
+  /// Walks [_fingerHistory] backwards to find the most recent sample
+  /// captured at least [_releaseSlipLookback] before now — that gives us
+  /// the stable aim the player was actually holding, ignoring the few
+  /// pixels of drift iOS reports as the finger leaves the glass. Falls
+  /// back to the latest known position if the press was too short for
+  /// the lookback window to be useful (e.g. a quick tap).
+  Vector2 _releaseAimPos() {
+    final cutoff = DateTime.now().subtract(_releaseSlipLookback);
+    for (var i = _fingerHistory.length - 1; i >= 0; i--) {
+      if (_fingerHistory[i].t.isBefore(cutoff)) {
+        return _fingerHistory[i].pos;
+      }
+    }
+    return _fingerScreenPos!;
   }
 
   // ---------------- input ----------------
@@ -1835,6 +1879,8 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     _charging = true;
     _chargeMs = 0;
     _fingerScreenPos = event.localPosition;
+    _fingerHistory.clear();
+    _recordFingerSample(event.localPosition);
     _updatePreview();
   }
 
@@ -1843,6 +1889,7 @@ class JumpingJackGame extends FlameGame with DragCallbacks {
     super.onDragUpdate(event);
     if (!_charging) return;
     _fingerScreenPos = event.localEndPosition;
+    _recordFingerSample(event.localEndPosition);
   }
 
   @override

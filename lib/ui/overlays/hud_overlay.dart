@@ -75,14 +75,18 @@ class _HudOverlayState extends State<HudOverlay>
                         ),
                       ),
                     ),
+                  // Combo badge: solo-only. In BR the top-left already
+                  // shows the kill / event feed (rendered by the BR HUD
+                  // overlay) and the combo chip was overlapping it +
+                  // distracting from the social readout that actually
+                  // matters in BR. Hiding it entirely in BR keeps the
+                  // BR HUD clean and lets combos still drive the score
+                  // multiplier silently.
                   if (state.comboCount >= GameConfig.comboMinDisplay &&
-                      !game.tutorialCoachingActive)
+                      !game.tutorialCoachingActive &&
+                      !game.isBattleRoyale)
                     Positioned(
-                      // BR has no score row at the top, so the combo
-                      // slides up to the very edge and reads as a
-                      // primary stat. Solo keeps its previous offset
-                      // that clears the dot-matrix score line.
-                      top: game.isBattleRoyale ? 12 : 90,
+                      top: 90,
                       left: 0,
                       right: 0,
                       child: Center(

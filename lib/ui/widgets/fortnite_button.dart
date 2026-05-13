@@ -311,21 +311,34 @@ class _FortniteButtonState extends State<FortniteButton>
                     ),
                     const SizedBox(width: 10),
                   ],
+                  // FittedBox.scaleDown instead of an ellipsis: with the
+                  // Bungee font + letterSpacing 2.0 a label like "BATTLE
+                  // ROYALE" overflows the right Expanded column on the
+                  // home screen at fontSize 14, and used to render as
+                  // "BATTLE ROY…". Scaling down preserves the whole word
+                  // — it just shrinks a touch when needed — which keeps
+                  // the home CTA pair readable in every language and
+                  // every screen width without us having to tune each
+                  // label's font size by hand.
                   Flexible(
-                    child: Text(
-                      widget.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: JackDesign.bungee(
-                        fontSize: widget.fontSize,
-                        color: v.textColor,
-                        letterSpacing: 2.0,
-                        shadows: [
-                          Shadow(
-                            color: v.textShadowColor,
-                            offset: const Offset(0, 1),
-                          ),
-                        ],
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.center,
+                      child: Text(
+                        widget.label,
+                        maxLines: 1,
+                        softWrap: false,
+                        style: JackDesign.bungee(
+                          fontSize: widget.fontSize,
+                          color: v.textColor,
+                          letterSpacing: 2.0,
+                          shadows: [
+                            Shadow(
+                              color: v.textShadowColor,
+                              offset: const Offset(0, 1),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),

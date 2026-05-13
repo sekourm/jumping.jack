@@ -68,6 +68,57 @@ abstract class Strings {
   String get helpReplayTutorial;
   /// Subtitle / context line under the replay-tutorial CTA.
   String get helpReplayTutorialDesc;
+  /// Title of the stats dialog opened from the home screen's trophy chip.
+  String get statsTitle;
+  /// Label of the "best solo score" row in the stats dialog.
+  String get statsBestScore;
+  /// Subtitle for the best-score row — explains where it comes from.
+  String get statsBestScoreDesc;
+  /// Label of the "BR wins" row in the stats dialog.
+  String get statsBrWins;
+  /// Subtitle for the BR-wins row — explains where it comes from.
+  String get statsBrWinsDesc;
+  /// Placeholder value shown in the stats dialog when the player has no
+  /// recorded score yet.
+  String get statsNoScore;
+  /// Title of the world ranking dialog opened from the home screen's
+  /// podium chip.
+  String get rankingTitle;
+  /// Label of the Battle Royale tab inside the ranking dialog.
+  String get rankingTabBr;
+  /// Label of the Best Score tab inside the ranking dialog.
+  String get rankingTabScore;
+  /// Empty-state message shown inside both ranking tabs until the
+  /// global leaderboard data is wired up.
+  String get rankingComingSoon;
+  /// Tooltip / accessibility label for the world ranking button.
+  String get rankingTooltip;
+  /// Inline error shown in the pseudo edit dialog when the chosen
+  /// name is already taken by another player.
+  String get nameErrorTaken;
+  /// Inline error when the name matches the server-side blacklist.
+  String get nameErrorForbidden;
+  /// Inline error when the name is too short (<2 chars after trim).
+  String get nameErrorTooShort;
+  /// Inline error when the name is empty after trim.
+  String get nameErrorEmpty;
+  /// Inline error for any other failure (network, server side).
+  String get nameErrorGeneric;
+  /// Inline error shown when the cloud profile for this device has a
+  /// recovery code different from the local one — typically after a
+  /// reinstall that wiped prefs but kept the IDFV-derived player_id.
+  String get nameErrorRecoveryMismatch;
+  /// Underlined CTA next to "Restore profile" inside the pseudo edit
+  /// dialog. Opens the reset confirmation.
+  String get resetProfileLabel;
+  /// Title of the reset-profile confirmation dialog.
+  String get resetProfileTitle;
+  /// Body text of the reset confirmation, explaining what gets wiped.
+  String get resetProfileDesc;
+  /// Confirm button label inside the reset dialog.
+  String get resetProfileCta;
+  /// Snackbar shown after the profile has been reset.
+  String get resetProfileSuccess;
 
   // ---- Solo death overlay ----
   String get gameOver;

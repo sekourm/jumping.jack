@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required at runtime by Supabase (Battle Royale realtime + RPC) and
+         google_fonts (downloads Bungee + Manrope on first run). The debug/
+         and profile/ manifests already declare it, but release APKs use
+         this main manifest only — without it the release build silently
+         fails BR matchmaking and falls back to the system default font. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="jumping_jack"
         android:name="${applicationName}"
