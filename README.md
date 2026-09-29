@@ -1,4 +1,4 @@
-# jumping_jack
+# jumping.jack
 
 Jeu mobile/web/desktop construit avec **Flutter** + **Flame**.
 
